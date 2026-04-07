@@ -3,11 +3,10 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
-import 'package:vibration/vibration.dart';
 
 enum DetectedSound { horn, siren, brake, none }
 
-const _hornClasses = [27, 302, 382, 390];   // Car horn + vehicle sounds
+const _hornClasses = [27, 302, 382, 390, 394];
 const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
 const _brakeClasses = [308];
 
@@ -72,8 +71,8 @@ class SoundDetector {
     _isInferring = true;
 
     try {
-      final input = [samples]; // [1, 15600]
-      final output = [List.filled(521, 0.0)]; // [1, 521]
+      final input = [samples];
+      final output = [List.filled(521, 0.0)];
 
       _interpreter!.run(input, output);
 
@@ -85,7 +84,6 @@ class SoundDetector {
       final detected = _classify(scores);
       if (detected != DetectedSound.none) {
         _detectionController.add(detected);
-        _vibrate(detected);
       }
     } catch (e) {
       print('❌ 추론 오류: $e');
@@ -101,7 +99,7 @@ class SoundDetector {
 
     print('🎯 horn=$hornScore siren=$sirenScore brake=$brakeScore');
 
-    const threshold = 0.15;
+    const threshold = 0.08;
 
     if (sirenScore > threshold && sirenScore >= hornScore && sirenScore >= brakeScore) {
       return DetectedSound.siren;
@@ -113,20 +111,6 @@ class SoundDetector {
       return DetectedSound.brake;
     }
     return DetectedSound.none;
-  }
-
-  Future<void> _vibrate(DetectedSound sound) async {
-    if (!await Vibration.hasVibrator()) return;
-    switch (sound) {
-      case DetectedSound.horn:
-        Vibration.vibrate(pattern: [0, 200, 100, 200, 100, 200]);
-      case DetectedSound.siren:
-        Vibration.vibrate(duration: 800);
-      case DetectedSound.brake:
-        Vibration.vibrate(pattern: [0, 150, 100, 150]);
-      case DetectedSound.none:
-        break;
-    }
   }
 
   void dispose() {

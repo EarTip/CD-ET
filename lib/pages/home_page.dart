@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../widgets/main_card.dart';
 import '../widgets/alert_grid.dart';
 import '../widgets/recent_list.dart';
-import '../services/sound_detector.dart';
+import '../services/sound_manager.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,9 +16,15 @@ class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   bool _isListening = false;
 
-  final SoundDetector _detector = SoundDetector();
+  final SoundManager _manager = SoundManager();
   StreamSubscription? _subscription;
   final List<Map<String, dynamic>> _recentLogs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _manager.init();
+  }
 
   Future<void> _onRefresh() async {
     await Future.delayed(const Duration(milliseconds: 800));
@@ -27,11 +33,11 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _toggleListening() async {
     if (_isListening) {
-      await _detector.stop();
+      _manager.stopMonitoring();
       _subscription?.cancel();
     } else {
-      await _detector.start();
-      _subscription = _detector.detectionStream.listen((sound) {
+      _manager.startMonitoring();
+      _subscription = _manager.detectionStream.listen((sound) {
         setState(() {
           _recentLogs.insert(0, {
             'sound': sound,
@@ -47,7 +53,7 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _subscription?.cancel();
-    _detector.dispose();
+    _manager.dispose();
     super.dispose();
   }
 
@@ -63,27 +69,27 @@ class _HomePageState extends State<HomePage> {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 24),
-              _buildHeader(),
-              const SizedBox(height: 24),
-              MainCard(
-                isListening: _isListening,
-                onToggle: _toggleListening,
-              ),
-              const SizedBox(height: 20),
-              const Text('감지 항목', style: _sectionTitle),
-              const SizedBox(height: 12),
-              AlertGrid(isListening: _isListening),
-              const SizedBox(height: 20),
-              const Text('최근 감지', style: _sectionTitle),
-              const SizedBox(height: 12),
-              RecentList(logs: _recentLogs),
-              const SizedBox(height: 20),
-            ],
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 24),
+                _buildHeader(),
+                const SizedBox(height: 24),
+                MainCard(
+                  isListening: _isListening,
+                  onToggle: _toggleListening,
+                ),
+                const SizedBox(height: 20),
+                const Text('감지 항목', style: _sectionTitle),
+                const SizedBox(height: 12),
+                AlertGrid(isListening: _isListening),
+                const SizedBox(height: 20),
+                const Text('최근 감지', style: _sectionTitle),
+                const SizedBox(height: 12),
+                RecentList(logs: _recentLogs),
+                const SizedBox(height: 20),
+              ],
+            ),
           ),
-        ),
         ),
       ),
       bottomNavigationBar: _buildBottomNav(),
