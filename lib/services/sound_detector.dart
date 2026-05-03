@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
@@ -16,7 +17,7 @@ class SoundDetector {
 
   static const int _sampleRate = 16000;
   static const int _windowSize = 15600;
-  static const int _hopSize = _sampleRate ~/ 2;
+  static const int _hopSize = _sampleRate ~/ 4;
 
   final List<double> _buffer = [];
   Interpreter? _interpreter;
@@ -33,10 +34,23 @@ class SoundDetector {
   Future<void> start() async {
     if (_interpreter == null) await init();
 
-    final stream = await _recorder.startStream(const RecordConfig(
+    final stream = await _recorder.startStream(RecordConfig(
       encoder: AudioEncoder.pcm16bits,
       sampleRate: _sampleRate,
       numChannels: 1,
+      iosConfig: IosRecordConfig(
+        categoryOptions: [
+          IosAudioCategoryOption.mixWithOthers,
+          IosAudioCategoryOption.duckOthers,
+          IosAudioCategoryOption.allowBluetoothA2DP,
+        ],
+      ),
+      androidConfig: AndroidRecordConfig(
+        audioSource: AndroidAudioSource.mic, // 내장 마이크 강제
+        muteAudio: false,                    // 음악 음소거 안 함
+        manageBluetooth: false,              // SCO 차단 → A2DP 고음질 유지
+        audioManagerMode: AudioManagerMode.modeNormal, // 통화 모드 전환 안 함
+      ),
     ));
     print('✅ 마이크 스트림 시작');
     stream.listen(_onAudioData);
@@ -54,8 +68,11 @@ class SoundDetector {
       if (sample > 32767) sample -= 65536;
       _buffer.add(sample / 32768.0);
     }
+
     while (_buffer.length >= _windowSize) {
       if (_isInferring) {
+        // 추론 중엔 버퍼 누적만 하고 hopSize만큼만 제거
+        // (버퍼를 통째로 버리지 않아 연속 감지 가능)
         _buffer.removeRange(0, _hopSize);
         continue;
       }
@@ -93,13 +110,15 @@ class SoundDetector {
   }
 
   DetectedSound _classify(List<double> scores) {
-    double hornScore = _hornClasses.map((i) => scores[i]).reduce((a, b) => a + b) / _hornClasses.length;
-    double sirenScore = _sirenClasses.map((i) => scores[i]).reduce((a, b) => a + b) / _sirenClasses.length;
-    double brakeScore = _brakeClasses.map((i) => scores[i]).reduce((a, b) => a + b);
+    // 평균 대신 max 사용 → 클래스 수 차이로 인한 불균형 해소
+    // siren 8개 클래스 평균 < horn 5개 클래스 평균 문제 해결
+    final hornScore = _hornClasses.map((i) => scores[i]).reduce(max);
+    final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
+    final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
 
     print('🎯 horn=$hornScore siren=$sirenScore brake=$brakeScore');
 
-    const threshold = 0.08;
+    const threshold = 0.15; // max 기반이라 임계값 상향 (오탐 방지)
 
     if (sirenScore > threshold && sirenScore >= hornScore && sirenScore >= brakeScore) {
       return DetectedSound.siren;

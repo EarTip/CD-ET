@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import '../widgets/main_card.dart';
 import '../widgets/alert_grid.dart';
@@ -15,15 +14,20 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   bool _isListening = false;
+  bool _isInitialized = false;
 
   final SoundManager _manager = SoundManager();
-  StreamSubscription? _subscription;
   final List<Map<String, dynamic>> _recentLogs = [];
 
   @override
   void initState() {
     super.initState();
-    _manager.init();
+    _initAsync();
+  }
+
+  Future<void> _initAsync() async {
+    await _manager.init();
+    if (mounted) setState(() => _isInitialized = true);
   }
 
   Future<void> _onRefresh() async {
@@ -32,27 +36,23 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _toggleListening() async {
+    print('🔘 _toggleListening 호출됨, 현재 isListening=$_isListening');
     if (_isListening) {
-      _manager.stopMonitoring();
-      _subscription?.cancel();
+      await _manager.stopMonitoring();
     } else {
-      _manager.startMonitoring();
-      _subscription = _manager.detectionStream.listen((sound) {
+      _manager.onDetected = (sound) {
         setState(() {
-          _recentLogs.insert(0, {
-            'sound': sound,
-            'time': DateTime.now(),
-          });
+          _recentLogs.insert(0, {'sound': sound, 'time': DateTime.now()});
           if (_recentLogs.length > 20) _recentLogs.removeLast();
         });
-      });
+      };
+      await _manager.startMonitoring();
     }
     setState(() => _isListening = !_isListening);
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
     _manager.dispose();
     super.dispose();
   }
@@ -76,7 +76,7 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 24),
                 MainCard(
                   isListening: _isListening,
-                  onToggle: _toggleListening,
+                  onToggle: _isInitialized ? _toggleListening : null,
                 ),
                 const SizedBox(height: 20),
                 const Text('감지 항목', style: _sectionTitle),

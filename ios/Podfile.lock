@@ -1188,6 +1188,8 @@ PODS:
     - abseil/meta/type_traits
     - abseil/xcprivacy
   - abseil/xcprivacy (1.20240722.0)
+  - audio_session (0.0.1):
+    - Flutter
   - BoringSSL-GRPC (0.0.37):
     - BoringSSL-GRPC/Implementation (= 0.0.37)
     - BoringSSL-GRPC/Interface (= 0.0.37)
@@ -1453,6 +1455,7 @@ PODS:
     - Flutter
 
 DEPENDENCIES:
+  - audio_session (from `.symlinks/plugins/audio_session/ios`)
   - cloud_firestore (from `.symlinks/plugins/cloud_firestore/ios`)
   - device_info_plus (from `.symlinks/plugins/device_info_plus/ios`)
   - firebase_analytics (from `.symlinks/plugins/firebase_analytics/ios`)
@@ -1491,6 +1494,8 @@ SPEC REPOS:
     - TensorFlowLiteSwift
 
 EXTERNAL SOURCES:
+  audio_session:
+    :path: ".symlinks/plugins/audio_session/ios"
   cloud_firestore:
     :path: ".symlinks/plugins/cloud_firestore/ios"
   device_info_plus:
@@ -1516,6 +1521,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   abseil: a05cc83bf02079535e17169a73c5be5ba47f714b
+  audio_session: 9bb7f6c970f21241b19f5a3658097ae459681ba0
   BoringSSL-GRPC: dded2a44897e45f28f08ae87a55ee4bcd19bc508
   cloud_firestore: 698d4d849c58da2ef2b3b8b9db27d2cd56614e7e
   device_info_plus: 21fcca2080fbcd348be798aa36c3e5ed849eefbe
@@ -1549,6 +1555,6 @@ SPEC CHECKSUMS:
   tflite_flutter: 64b192e11352fe36943ab6656e1d49207f1a5595
   vibration: 8e2f50fc35bb736f9eecb7dd9f7047fbb6a6e888
 
-PODFILE CHECKSUM: 4b015915ec662986b54bf30ab778da63f7dda016
+PODFILE CHECKSUM: 8f598bb3c90623ca28bfb5ba7d940bff91760428
 
 COCOAPODS: 1.16.2

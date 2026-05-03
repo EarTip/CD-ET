@@ -10,8 +10,19 @@ class SoundManager {
   final TtsService _tts = TtsService();
   final HapticService _haptic = HapticService();
 
+  final Map<DetectedSound, DateTime> _lastDetectedAt = {};
+  static const _cooldown = Duration(seconds: 3);
+
   StreamSubscription<DetectedSound>? _subscription;
   Stream<DetectedSound> get detectionStream => _detector.detectionStream;
+
+  void Function(DetectedSound)? onDetected;
+
+  bool _canTrigger(DetectedSound sound) {
+    final last = _lastDetectedAt[sound];
+    if (last == null) return true;
+    return DateTime.now().difference(last) > _cooldown;
+  }
 
   Future<void> init() async {
     await _detector.init();
@@ -19,20 +30,32 @@ class SoundManager {
     await _tts.init();
   }
 
-  void startMonitoring() {
-    _detector.start();
-
-    _subscription = _detector.detectionStream.listen((sound) {
+  Future<void> startMonitoring() async {
+    print('🟢 startMonitoring 호출됨');
+    await _subscription?.cancel();
+    await _detector.start();
+    _subscription = _detector.detectionStream.listen((sound) async {
       if (sound == DetectedSound.none) return;
+
+      print('🚨 감지: $sound');
+      onDetected?.call(sound);
+      if (!_canTrigger(sound)) {
+        print('⏭ 쿨다운 중 — 스킵');
+        return;
+      }
+      _lastDetectedAt[sound] = DateTime.now();
+
       _notification.showSoundAlert(sound);
-      _tts.speakUpdate(sound);
-      _haptic.playPattern(sound);
+      await _haptic.playPattern(sound);
+      await _tts.speakUpdate(sound);
     });
   }
 
-  void stopMonitoring() {
-    _subscription?.cancel();
-    _detector.stop();
+  Future<void> stopMonitoring() async {
+    await _subscription?.cancel();
+    _subscription = null;
+    await _detector.stop();
+    await _tts.stop();
   }
 
   void dispose() {
