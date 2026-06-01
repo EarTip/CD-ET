@@ -1,20 +1,20 @@
-import 'package:vibration/vibration.dart';
+import 'package:flutter/services.dart';
 import 'sound_detector.dart';
 
 class HapticService {
-  Future<void> playPattern(DetectedSound sound) async {
-    final hasVibrator = await Vibration.hasVibrator() ?? false;
-    if (!hasVibrator) return;
+  static const _channel = MethodChannel('haptic_channel');
 
-    switch (sound) {
-      case DetectedSound.horn:
-        Vibration.vibrate(pattern: [0, 100, 200, 100]);
-      case DetectedSound.siren:
-        Vibration.vibrate(pattern: [0, 600]);
-      case DetectedSound.brake:
-        Vibration.vibrate(pattern: [0, 60, 60, 60, 60, 60]);
-      case DetectedSound.none:
-        break;
+  Future<void> playPattern(DetectedSound sound) async {
+    final method = switch (sound) {
+      DetectedSound.siren => 'siren',
+      DetectedSound.horn  => 'horn',
+      DetectedSound.brake => 'brake',
+      // DetectedSound.name  => 'name',   -- 아직 sound_detector.dart에 name 구현 안 함
+      DetectedSound.none  => null,
+    };
+
+    if (method != null) {
+      await _channel.invokeMethod(method);
     }
   }
 }
