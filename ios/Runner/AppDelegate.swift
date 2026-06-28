@@ -5,22 +5,30 @@ import AVFoundation
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let hapticChannel = HapticChannel()
+  
 
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     let session = AVAudioSession.sharedInstance()
-    try? session.setCategory(.playAndRecord,
-      options: [.mixWithOthers, .duckOthers, .allowBluetoothA2DP])
+    do {
+      try session.setCategory(.playAndRecord,
+        options: [.mixWithOthers, .duckOthers, .allowBluetoothA2DP])
+    } catch {
+      try? session.setCategory(.playAndRecord,
+        options: [.mixWithOthers, .duckOthers, .allowBluetooth])
+    }
     try? session.setActive(true)
+    try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
 
     GeneratedPluginRegistrant.register(with: self)
     let result = super.application(application, didFinishLaunchingWithOptions: launchOptions)
 
-    if let controller = window?.rootViewController as? FlutterViewController {
-      hapticChannel.register(with: controller)
-      setupInterruptionObserver()
+    setupInterruptionObserver()
+
+    if let registrar = self.registrar(forPlugin: "HapticChannel") {
+      hapticChannel.register(with: registrar.messenger())
     }
 
     return result

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'sound_detector.dart';
 import 'activity_service.dart';
 import 'geofence_service.dart';
@@ -32,14 +33,6 @@ class SoundManager {
 
   MotionState get motionState => _activity.currentState;
   SensitivityLevel get sensitivityLevel => _geofence.currentLevel;
-
-  void Function(DetectedSound)? onDetected;
-
-  bool _canTrigger(DetectedSound sound) {
-    final last = _lastDetectedAt[sound];
-    if (last == null) return true;
-    return DateTime.now().difference(last) > _cooldown;
-  }
 
   Future<void> init() async {
     await _detector.init();
@@ -101,12 +94,28 @@ class SoundManager {
 
       onDetected?.call(event);
 
-      if (!_canTrigger(event.sound)) return;
+      if (!_canTrigger(event.sound)) {
+        debugPrint('⏳ 쿨다운 중 — ${event.sound} 스킵');
+        return;
+      }
       _lastDetectedAt[event.sound] = DateTime.now();
+      debugPrint('🔔 알림 트리거: ${event.sound}');
 
       _notification.showSoundAlert(event.sound);
-      await _haptic.playPattern(event.sound);
-      await _tts.speakUpdate(event.sound);
+
+      try {
+        await _haptic.playPattern(event.sound);
+        debugPrint('✅ 햅틱 완료');
+      } catch (e) {
+        debugPrint('❌ 햅틱 에러: $e');
+      }
+
+      try {
+        await _tts.speakUpdate(event.sound);
+        debugPrint('✅ TTS 호출 완료');
+      } catch (e) {
+        debugPrint('❌ TTS 에러: $e');
+      }
     });
   }
 

@@ -5,6 +5,7 @@ class HapticService {
   static const _channel = MethodChannel('haptic_channel');
 
   Future<void> playPattern(DetectedSound sound) async {
+    print('🎯 playPattern 호출됨: $sound');  // 추가
     final method = switch (sound) {
       DetectedSound.siren => 'siren',
       DetectedSound.horn  => 'horn',

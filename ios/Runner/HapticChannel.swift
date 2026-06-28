@@ -2,13 +2,14 @@ import Flutter
 
 class HapticChannel {
     private let hapticManager = HapticManager()
+    private var channel: FlutterMethodChannel?
     
-    func register(with controller: FlutterViewController) {
-        let channel = FlutterMethodChannel(
+    func register(with messenger: FlutterBinaryMessenger) {
+        channel = FlutterMethodChannel(
             name: "haptic_channel",
-            binaryMessenger: controller.binaryMessenger
+            binaryMessenger: messenger
         )
-        channel.setMethodCallHandler { call, result in
+        channel?.setMethodCallHandler { call, result in
             switch call.method {
             case "siren": self.hapticManager.playSirenHaptic()
             case "horn":  self.hapticManager.playHornHaptic()

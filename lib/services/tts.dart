@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'sound_detector.dart';
@@ -24,21 +25,32 @@ class TtsService {
       await _tts.awaitSpeakCompletion(false);
 
       if (Platform.isIOS) {
-        await _tts.setIosAudioCategory(
-          IosTextToSpeechAudioCategory.playback,
-          [
-            IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-          ],
-          IosTextToSpeechAudioMode.voicePrompt,
-        );
+        await _tts.setSharedInstance(true);
         await _tts.autoStopSharedSession(false);
       }
 
+      _tts.setStartHandler(() {
+        debugPrint('🔊 TTS 재생 시작됨');
+      });
+
       _tts.setCompletionHandler(() async {
+        debugPrint('🔊 TTS 재생 완료');
         await _audioFocus.releaseFocus();
         onSpeakCompleted?.call();
       });
+
+      _tts.setErrorHandler((msg) {
+        debugPrint('❌ TTS 에러: $msg');
+      });
+
+      _tts.setCancelHandler(() {
+        debugPrint('⚠️ TTS 취소됨');
+      });
+
+      final languages = await _tts.getLanguages;
+      debugPrint('🌐 TTS 사용 가능 언어: $languages');
+      final isKoAvailable = await _tts.isLanguageAvailable('ko-KR');
+      debugPrint('🇰🇷 ko-KR 사용 가능: $isKoAvailable');
     }
     _initialized = true;
   }
@@ -49,9 +61,10 @@ class TtsService {
     if (Platform.isAndroid) {
       await _androidChannel.invokeMethod('speak', {'text': message});
     } else {
+      debugPrint('🔊 TTS speak 호출: "$message"');
       await _audioFocus.requestFocus();
-      await _tts.stop();
-      await _tts.speak(message);
+      final result = await _tts.speak(message);
+      debugPrint('🔊 TTS speak 결과: $result (1=성공, 0=실패)');
     }
   }
 

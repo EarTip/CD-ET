@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../widgets/main_card.dart';
 import '../widgets/alert_grid.dart';
@@ -129,7 +130,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  const sectionTitle = TextStyle(
+  static const sectionTitle = TextStyle(
     fontSize: 17,
     fontWeight: FontWeight.w700,
     color: Color(0xFF1A1A2E),

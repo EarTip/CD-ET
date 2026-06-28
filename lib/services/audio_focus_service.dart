@@ -19,8 +19,7 @@ class AudioFocusService {
       avAudioSessionMode: AVAudioSessionMode.defaultMode,
       avAudioSessionCategoryOptions:
           AVAudioSessionCategoryOptions.mixWithOthers |
-          AVAudioSessionCategoryOptions.duckOthers |
-          AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+          AVAudioSessionCategoryOptions.duckOthers,
       // Android: 덕킹만, 일시정지 안 함
       androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransientMayDuck,
       androidWillPauseWhenDucked: false,
