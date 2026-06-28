@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -38,6 +39,10 @@ class SoundDetector {
       encoder: AudioEncoder.pcm16bits,
       sampleRate: _sampleRate,
       numChannels: 1,
+      // Android: AUDIOFOCUS_GAIN 요청 차단 → 음악 재생 유지, TTS와 충돌 방지
+      audioInterruption: Platform.isAndroid
+          ? AudioInterruptionMode.none
+          : AudioInterruptionMode.pause,
       iosConfig: IosRecordConfig(
         categoryOptions: [
           IosAudioCategoryOption.mixWithOthers,
@@ -46,10 +51,10 @@ class SoundDetector {
         ],
       ),
       androidConfig: AndroidRecordConfig(
-        audioSource: AndroidAudioSource.mic, // 내장 마이크 강제
-        muteAudio: false,                    // 음악 음소거 안 함
-        manageBluetooth: false,              // SCO 차단 → A2DP 고음질 유지
-        audioManagerMode: AudioManagerMode.modeNormal, // 통화 모드 전환 안 함
+        audioSource: AndroidAudioSource.voiceRecognition,
+        muteAudio: false,
+        manageBluetooth: false,
+        audioManagerMode: AudioManagerMode.modeNormal,
       ),
     ));
     print('✅ 마이크 스트림 시작');

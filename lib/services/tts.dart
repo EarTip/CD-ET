@@ -1,49 +1,62 @@
+import 'dart:io';
+import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'sound_detector.dart';
-import 'dart:io';
 import 'audio_focus_service.dart';
 
+typedef VoidCallback = void Function();
+
 class TtsService {
+  // iOS
   final FlutterTts _tts = FlutterTts();
   final AudioFocusService _audioFocus = AudioFocusService();
+
+  // Android
+  static const _androidChannel = MethodChannel('com.example.eartips/tts');
+
   bool _initialized = false;
   VoidCallback? onSpeakCompleted;
 
   Future<void> init() async {
-    await _audioFocus.init();
-    await _tts.setLanguage('ko-KR');
-    await _tts.setSpeechRate(0.5);
-    await _tts.setVolume(1.0);  //최댓값이 1.0
-    await _tts.awaitSpeakCompletion(false);
-
-    if (Platform.isIOS) {
-      await _tts.setIosAudioCategory(
-        IosTextToSpeechAudioCategory.playback,
-        [
-          IosTextToSpeechAudioCategoryOptions.mixWithOthers,
-          IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
-        ],
-        IosTextToSpeechAudioMode.voicePrompt,
-      );
-      await _tts.autoStopSharedSession(false);
-    }
-
     if (Platform.isAndroid) {
-      await _tts.setQueueMode(1);
-    }
+      await _androidChannel.invokeMethod('init');
+    } else {
+      await _audioFocus.init();
+      await _tts.setLanguage('ko-KR');
+      await _tts.setSpeechRate(0.5);
+      await _tts.setVolume(1.0);
+      await _tts.awaitSpeakCompletion(false);
 
-    _tts.setCompletionHandler(() async {
-      await _audioFocus.releaseFocus();
-      onSpeakCompleted?.call();
-    });
+      if (Platform.isIOS) {
+        await _tts.setIosAudioCategory(
+          IosTextToSpeechAudioCategory.playback,
+          [
+            IosTextToSpeechAudioCategoryOptions.mixWithOthers,
+            IosTextToSpeechAudioCategoryOptions.allowBluetoothA2DP,
+          ],
+          IosTextToSpeechAudioMode.voicePrompt,
+        );
+        await _tts.autoStopSharedSession(false);
+      }
+
+      _tts.setCompletionHandler(() async {
+        await _audioFocus.releaseFocus();
+        onSpeakCompleted?.call();
+      });
+    }
     _initialized = true;
   }
 
   Future<void> speak(String message) async {
     if (!_initialized) await init();
-    await _audioFocus.requestFocus();
-    await _tts.stop();
-    await _tts.speak(message);
+
+    if (Platform.isAndroid) {
+      await _androidChannel.invokeMethod('speak', {'text': message});
+    } else {
+      await _audioFocus.requestFocus();
+      await _tts.stop();
+      await _tts.speak(message);
+    }
   }
 
   Future<void> speakUpdate(DetectedSound sound) async {
@@ -60,14 +73,20 @@ class TtsService {
   }
 
   Future<void> stop() async {
-    await _tts.stop();
-    await _audioFocus.forceRelease();
+    if (Platform.isAndroid) {
+      await _androidChannel.invokeMethod('stop');
+    } else {
+      await _tts.stop();
+      await _audioFocus.forceRelease();
+    }
   }
 
   void dispose() {
-    _tts.stop();
-    _audioFocus.dispose();
+    if (Platform.isAndroid) {
+      _androidChannel.invokeMethod('dispose');
+    } else {
+      _tts.stop();
+      _audioFocus.dispose();
+    }
   }
 }
-
-typedef VoidCallback = void Function();

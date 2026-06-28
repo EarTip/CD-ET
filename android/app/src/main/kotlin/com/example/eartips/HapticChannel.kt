@@ -1,27 +1,41 @@
+package com.example.eartips
+
+import android.content.Context
+import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.embedding.android.FlutterActivity
 
-class HapticChannel(activity: FlutterActivity) {
+class HapticChannel(private val context: Context) {
 
-    private val hapticManager = HapticManager(activity)
+    private val hapticManager = HapticManager(context)
 
-    companion object {
-        const val CHANNEL_NAME = "haptic_channel"  // iOS와 동일한 채널명
-    }
-
-    fun register(flutterEngine: io.flutter.embedding.engine.FlutterEngine) {
+    fun register(flutterEngine: FlutterEngine) {
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            CHANNEL_NAME
+            "haptic_channel"
         ).setMethodCallHandler { call, result ->
             when (call.method) {
-                "siren" -> hapticManager.playSiren()
-                "horn"  -> hapticManager.playHorn()
-                "brake" -> hapticManager.playBrake()
-                "name"  -> hapticManager.playNameCalled()
-                else    -> result.notImplemented()
+                "siren" -> {
+                    hapticManager.playSiren()
+                    result.success(null)
+                }
+                "horn" -> {
+                    hapticManager.playHorn()
+                    result.success(null)
+                }
+                "brake" -> {
+                    hapticManager.playBrake()
+                    result.success(null)
+                }
+                "name" -> {
+                    hapticManager.playNameCalled()
+                    result.success(null)
+                }
+                "cancel" -> {
+                    hapticManager.cancel()
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
-            result.success(null)
         }
     }
 }

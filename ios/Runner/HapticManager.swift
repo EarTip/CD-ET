@@ -2,6 +2,7 @@ import CoreHaptics
 
 class HapticManager {
     private var engine: CHHapticEngine?
+    private var currentPlayer: CHHapticPatternPlayer?  // 재생 중 해제 방지
 
     init() {
         prepareEngine()
@@ -13,6 +14,11 @@ class HapticManager {
             engine = try CHHapticEngine()
             engine?.playsHapticsOnly = true  // 오디오 세션 미점유 → TTS 동시 사용 가능
             try engine?.start()
+
+            engine?.stoppedHandler = { [weak self] reason in
+                // 백그라운드 진입·오디오 인터럽션 등으로 엔진이 멈출 때마다 재시작
+                try? self?.engine?.start()
+            }
 
             engine?.resetHandler = { [weak self] in
                 try? self?.engine?.start()
@@ -128,8 +134,8 @@ class HapticManager {
         guard let engine else { return }
         do {
             let pattern = try CHHapticPattern(events: events, parameterCurves: curves)
-            let player = try engine.makePlayer(with: pattern)
-            try player.start(atTime: CHHapticTimeImmediate)
+            currentPlayer = try engine.makePlayer(with: pattern)
+            try currentPlayer?.start(atTime: CHHapticTimeImmediate)
         } catch {
             print("햅틱 재생 실패: \(error)")
         }
