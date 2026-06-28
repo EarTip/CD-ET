@@ -30,9 +30,11 @@ class RecentList extends StatelessWidget {
 
     return Column(
       children: logs.map((log) {
-        final sound = log['sound'] as DetectedSound;
-        final time = log['time'] as DateTime;
-        final info = _soundInfo(sound);
+        final sound     = log['sound']     as DetectedSound;
+        final direction = log['direction'] as SoundDirection;
+        final time      = log['time']      as DateTime;
+        final info      = _soundInfo(sound);
+        final dirInfo   = _dirInfo(direction);
 
         return Container(
           margin: const EdgeInsets.only(bottom: 10),
@@ -61,13 +63,35 @@ class RecentList extends StatelessWidget {
               ),
               const SizedBox(width: 14),
               Expanded(
-                child: Text(
-                  info.label,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF1A1A2E),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      info.label,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF1A1A2E),
+                      ),
+                    ),
+                    if (direction != SoundDirection.unknown) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Icon(dirInfo.icon, size: 12, color: dirInfo.color),
+                          const SizedBox(width: 4),
+                          Text(
+                            direction.label,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: dirInfo.color,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Text(
@@ -81,18 +105,19 @@ class RecentList extends StatelessWidget {
     );
   }
 
-  _SoundInfo _soundInfo(DetectedSound sound) {
-    switch (sound) {
-      case DetectedSound.horn:
-        return _SoundInfo(Icons.car_crash_outlined, '경적 감지됨', const Color(0xFFFF6B6B));
-      case DetectedSound.siren:
-        return _SoundInfo(Icons.emergency_outlined, '사이렌 감지됨', const Color(0xFFFFB347));
-      case DetectedSound.brake:
-        return _SoundInfo(Icons.directions_car_outlined, '급브레이크 감지됨', const Color(0xFFFF9F43));
-      case DetectedSound.none:
-        return _SoundInfo(Icons.volume_off_outlined, '알 수 없음', const Color(0xFFB0B8CC));
-    }
-  }
+  _SoundInfo _soundInfo(DetectedSound sound) => switch (sound) {
+        DetectedSound.horn  => _SoundInfo(Icons.car_crash_outlined,     '경적 감지됨',    const Color(0xFFFF6B6B)),
+        DetectedSound.siren => _SoundInfo(Icons.emergency_outlined,     '사이렌 감지됨',  const Color(0xFFFFB347)),
+        DetectedSound.brake => _SoundInfo(Icons.directions_car_outlined,'급브레이크 감지됨', const Color(0xFFFF9F43)),
+        DetectedSound.none  => _SoundInfo(Icons.volume_off_outlined,    '알 수 없음',    const Color(0xFFB0B8CC)),
+      };
+
+  _DirInfo _dirInfo(SoundDirection dir) => switch (dir) {
+        SoundDirection.front   => _DirInfo(Icons.arrow_upward,   const Color(0xFFFF3B30)),
+        SoundDirection.behind  => _DirInfo(Icons.arrow_downward, const Color(0xFFFF9500)),
+        SoundDirection.side    => _DirInfo(Icons.arrow_forward,  const Color(0xFF5B9CF6)),
+        SoundDirection.unknown => _DirInfo(Icons.help_outline,   const Color(0xFFB0B8CC)),
+      };
 
   String _timeAgo(DateTime time) {
     final diff = DateTime.now().difference(time);
@@ -107,4 +132,10 @@ class _SoundInfo {
   final String label;
   final Color color;
   _SoundInfo(this.icon, this.label, this.color);
+}
+
+class _DirInfo {
+  final IconData icon;
+  final Color color;
+  _DirInfo(this.icon, this.color);
 }

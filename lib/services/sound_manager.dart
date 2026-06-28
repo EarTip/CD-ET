@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'sound_detector.dart';
+import 'activity_service.dart';
+import 'geofence_service.dart';
 import 'notification.dart';
 import 'tts.dart';
 import 'haptic.dart';
 
 class SoundManager {
   final SoundDetector _detector = SoundDetector();
+  final ActivityService _activity = ActivityService();
+  final GeofenceService _geofence = GeofenceService();
   final NotificationService _notification = NotificationService();
   final TtsService _tts = TtsService();
   final HapticService _haptic = HapticService();
@@ -13,8 +17,21 @@ class SoundManager {
   final Map<DetectedSound, DateTime> _lastDetectedAt = {};
   static const _cooldown = Duration(seconds: 3);
 
-  StreamSubscription<DetectedSound>? _subscription;
-  Stream<DetectedSound> get detectionStream => _detector.detectionStream;
+  StreamSubscription<DetectionEvent>? _soundSubscription;
+  StreamSubscription<MotionState>? _motionSubscription;
+  StreamSubscription<SensitivityLevel>? _sensitivitySubscription;
+
+  bool _userEnabled = false;
+  bool _micActive = false;
+
+  void Function(DetectionEvent)? onDetected;
+
+  Stream<DetectionEvent> get detectionStream => _detector.detectionStream;
+  Stream<MotionState> get motionStream => _activity.motionStream;
+  Stream<SensitivityLevel> get sensitivityStream => _geofence.sensitivityStream;
+
+  MotionState get motionState => _activity.currentState;
+  SensitivityLevel get sensitivityLevel => _geofence.currentLevel;
 
   void Function(DetectedSound)? onDetected;
 
@@ -31,36 +48,81 @@ class SoundManager {
   }
 
   Future<void> startMonitoring() async {
-    print('🟢 startMonitoring 호출됨');
-    await _subscription?.cancel();
-    await _detector.start();
-    _subscription = _detector.detectionStream.listen((sound) async {
-      if (sound == DetectedSound.none) return;
+    _userEnabled = true;
 
-      print('🚨 감지: $sound');
-      onDetected?.call(sound);
-      if (!_canTrigger(sound)) {
-        print('⏭ 쿨다운 중 — 스킵');
-        return;
+    _startMic();
+
+    await _activity.start();
+    _motionSubscription = _activity.motionStream.listen((state) {
+      if (state == MotionState.still) {
+        _stopMic();
+      } else {
+        _startMic();
       }
-      _lastDetectedAt[sound] = DateTime.now();
-
-      _notification.showSoundAlert(sound);
-      await _haptic.playPattern(sound);
-      await _tts.speakUpdate(sound);
     });
+
+    await _geofence.start();
+    _sensitivitySubscription = _geofence.sensitivityStream.listen((level) {
+      _detector.setThreshold(level.threshold);
+    });
+    _detector.setThreshold(_geofence.currentLevel.threshold);
   }
 
   Future<void> stopMonitoring() async {
-    await _subscription?.cancel();
-    _subscription = null;
-    await _detector.stop();
+    _userEnabled = false;
+
+    _motionSubscription?.cancel();
+    _motionSubscription = null;
+    _activity.stop();
+
+    _sensitivitySubscription?.cancel();
+    _sensitivitySubscription = null;
+    _geofence.stop();
+
+    _stopMic();
+    _detector.setThreshold(SensitivityLevel.high.threshold);
+
     await _tts.stop();
+  }
+
+  bool _canTrigger(DetectedSound sound) {
+    final last = _lastDetectedAt[sound];
+    if (last == null) return true;
+    return DateTime.now().difference(last) > _cooldown;
+  }
+
+  void _startMic() {
+    if (_micActive || !_userEnabled) return;
+    _micActive = true;
+    _detector.start();
+
+    _soundSubscription = _detector.detectionStream.listen((event) async {
+      if (event.sound == DetectedSound.none) return;
+
+      onDetected?.call(event);
+
+      if (!_canTrigger(event.sound)) return;
+      _lastDetectedAt[event.sound] = DateTime.now();
+
+      _notification.showSoundAlert(event.sound);
+      await _haptic.playPattern(event.sound);
+      await _tts.speakUpdate(event.sound);
+    });
+  }
+
+  void _stopMic() {
+    if (!_micActive) return;
+    _micActive = false;
+    _soundSubscription?.cancel();
+    _soundSubscription = null;
+    _detector.stop();
   }
 
   void dispose() {
     stopMonitoring();
     _detector.dispose();
+    _activity.dispose();
+    _geofence.dispose();
     _tts.dispose();
   }
 }

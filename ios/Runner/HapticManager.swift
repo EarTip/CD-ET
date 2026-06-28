@@ -2,7 +2,6 @@ import CoreHaptics
 
 class HapticManager {
     private var engine: CHHapticEngine?
-    private var currentPlayer: CHHapticPatternPlayer?  // 재생 중 해제 방지
 
     init() {
         prepareEngine()

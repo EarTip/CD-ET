@@ -4,7 +4,7 @@ import AVFoundation
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
-  private lazy var hapticChannel = HapticChannel()
+  private let hapticChannel = HapticChannel()
 
   override func application(
     _ application: UIApplication,

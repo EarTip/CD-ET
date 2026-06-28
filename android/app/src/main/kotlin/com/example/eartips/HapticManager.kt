@@ -17,7 +17,6 @@ class HapticManager(private val context: Context) {
             context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
     }
-ㄴ
     // 🚨 사이렌: 파동형 반복 (올라갔다 내려오는 강도)
     fun playSiren() {
         // [대기, 진동, 대기, 진동, ...] 패턴 (ms 단위)

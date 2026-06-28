@@ -4,16 +4,12 @@ import 'package:flutter_tts/flutter_tts.dart';
 import 'sound_detector.dart';
 import 'audio_focus_service.dart';
 
-typedef VoidCallback = void Function();
-
 class TtsService {
-  // iOS
+  static const MethodChannel _androidChannel =
+      MethodChannel('com.example.eartips/tts');
+
   final FlutterTts _tts = FlutterTts();
   final AudioFocusService _audioFocus = AudioFocusService();
-
-  // Android
-  static const _androidChannel = MethodChannel('com.example.eartips/tts');
-
   bool _initialized = false;
   VoidCallback? onSpeakCompleted;
 
