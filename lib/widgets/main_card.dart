@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 class MainCard extends StatelessWidget {
   final bool isListening;
-  final VoidCallback onToggle;
+  final VoidCallback? onToggle;
 
   const MainCard({
     super.key,
@@ -40,7 +40,11 @@ class MainCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    isListening ? '감지 중' : '감지 꺼짐',
+                    onToggle == null
+                        ? '준비 중'
+                        : isListening
+                            ? '감지 중'
+                            : '감지 꺼짐',
                     style: const TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w800,
@@ -49,7 +53,11 @@ class MainCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    isListening ? '주변 소리를 분석하고 있어요' : '탭해서 감지를 시작하세요',
+                    onToggle == null
+                        ? '초기화하고 있어요'
+                        : isListening
+                            ? '주변 소리를 분석하고 있어요'
+                            : '탭해서 감지를 시작하세요',
                     style: TextStyle(
                       fontSize: 13,
                       color: Colors.white.withValues(alpha: 0.8),
@@ -69,11 +77,22 @@ class MainCard extends StatelessWidget {
                         : Colors.white.withValues(alpha: 0.25),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(
-                    isListening ? Icons.mic : Icons.mic_off,
-                    color: isListening ? const Color(0xFF5B9CF6) : Colors.white,
-                    size: 26,
-                  ),
+                  child: onToggle == null
+                      ? const Center(
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2.5,
+                            ),
+                          ),
+                        )
+                      : Icon(
+                          isListening ? Icons.mic : Icons.mic_off,
+                          color: isListening ? const Color(0xFF5B9CF6) : Colors.white,
+                          size: 26,
+                        ),
                 ),
               ),
             ],
