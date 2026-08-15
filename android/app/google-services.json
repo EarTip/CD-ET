@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1074657419220",
+    "project_id": "eartip-f150c",
+    "storage_bucket": "eartip-f150c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1074657419220:android:f8128e5099cf3809d44041",
+        "android_client_info": {
+          "package_name": "com.example.eartips"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBTHGh6c9C16kji9xJ-OmgjIdPqIWf8AmY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
