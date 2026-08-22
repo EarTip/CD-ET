@@ -1,10 +1,11 @@
 import 'dart:math';
+import 'dart:typed_data';
 
 // ──────────────────────────────────────────────
 // 공통 도메인 모델
 // ──────────────────────────────────────────────
 
-enum DetectedSound { horn, siren, brake, none }
+enum DetectedSound { horn, siren, brake, name, none }
 
 enum SoundDirection { front, behind, side, unknown }
 
@@ -21,6 +22,16 @@ class DetectionEvent {
   final DetectedSound sound;
   final SoundDirection direction;
   const DetectionEvent(this.sound, this.direction);
+}
+
+/// SoundDetector가 마이크에서 받은 원본 스테레오(또는 모노) PCM 청크.
+/// YAMNet 전용 윈도잉과 독립적으로, 다른 감지기(NameCallDetector 등)가
+/// 같은 마이크 스트림을 공유해서 쓸 수 있도록 노출하는 값 타입.
+class RawAudioChunk {
+  final Float32List left;
+  final Float32List right; // isStereo == false면 left와 동일한 값
+  final bool isStereo;
+  const RawAudioChunk(this.left, this.right, this.isStereo);
 }
 
 // ──────────────────────────────────────────────
