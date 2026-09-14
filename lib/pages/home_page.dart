@@ -6,6 +6,8 @@ import '../widgets/recent_list.dart';
 import '../services/sound_manager.dart';
 import '../services/activity_service.dart';
 import '../services/geofence_service.dart';
+import '../models/detection_log.dart';
+import '../services/log_repository.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -30,6 +32,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _initAsync();
+    _loadRecentLogs();
     _motionSubscription = _manager.motionStream.listen(
       (state) => setState(() => _motionState = state),
     );
@@ -41,6 +44,20 @@ class _HomePageState extends State<HomePage> {
   Future<void> _initAsync() async {
     await _manager.init();
     if (mounted) setState(() => _isInitialized = true);
+  }
+
+  Future<void> _loadRecentLogs() async {
+    final logs = await LogRepository.instance.recent();
+    if (mounted) {
+      setState(() {
+        _recentLogs.clear();
+        _recentLogs.addAll(
+          logs.map(
+            (l) => {'sound': l.sound, 'direction': l.direction, 'time': l.time},
+          ),
+        );
+      });
+    }
   }
 
   Future<void> _onRefresh() async {
@@ -59,11 +76,19 @@ class _HomePageState extends State<HomePage> {
       });
     } else {
       _manager.onDetected = (event) {
+        LogRepository.instance.insert(
+          DetectionLog(
+            sound: event.sound,
+            direction: event.direction,
+            time: DateTime.now(),
+          ),
+        );
+
         setState(() {
           _recentLogs.insert(0, {
-            'sound':     event.sound,
+            'sound': event.sound,
             'direction': event.direction,
-            'time':      DateTime.now(),
+            'time': DateTime.now(),
           });
           if (_recentLogs.length > 20) _recentLogs.removeLast();
         });
@@ -138,9 +163,12 @@ class _HomePageState extends State<HomePage> {
 
   Widget buildSensitivityBadge() {
     final (icon, color) = switch (_sensitivityLevel) {
-      SensitivityLevel.high     => (Icons.warning_amber_rounded, const Color(0xFFFF3B30)),
+      SensitivityLevel.high => (
+        Icons.warning_amber_rounded,
+        const Color(0xFFFF3B30),
+      ),
       SensitivityLevel.elevated => (Icons.cell_tower, const Color(0xFFFF9500)),
-      SensitivityLevel.normal   => (Icons.graphic_eq, const Color(0xFF8A8FA8)),
+      SensitivityLevel.normal => (Icons.graphic_eq, const Color(0xFF8A8FA8)),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -156,7 +184,11 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 8),
           Text(
             _sensitivityLevel.label,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -165,9 +197,21 @@ class _HomePageState extends State<HomePage> {
 
   Widget buildMotionBadge() {
     final (icon, label, color) = switch (_motionState) {
-      MotionState.moving  => (Icons.directions_walk, '이동 중 · 마이크 활성', const Color(0xFF34C759)),
-      MotionState.still   => (Icons.pause_circle_outline, '정지 · 마이크 대기', const Color(0xFFFF9500)),
-      MotionState.unknown => (Icons.sensors, '활동 감지 중...', const Color(0xFF8A8FA8)),
+      MotionState.moving => (
+        Icons.directions_walk,
+        '이동 중 · 마이크 활성',
+        const Color(0xFF34C759),
+      ),
+      MotionState.still => (
+        Icons.pause_circle_outline,
+        '정지 · 마이크 대기',
+        const Color(0xFFFF9500),
+      ),
+      MotionState.unknown => (
+        Icons.sensors,
+        '활동 감지 중...',
+        const Color(0xFF8A8FA8),
+      ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -181,7 +225,14 @@ class _HomePageState extends State<HomePage> {
         children: [
           Icon(icon, size: 16, color: color),
           const SizedBox(width: 8),
-          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -223,7 +274,11 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
-          child: const Icon(Icons.settings_outlined, color: Color(0xFF5B9CF6), size: 22),
+          child: const Icon(
+            Icons.settings_outlined,
+            color: Color(0xFF5B9CF6),
+            size: 22,
+          ),
         ),
       ],
     );
@@ -248,12 +303,27 @@ class _HomePageState extends State<HomePage> {
         elevation: 0,
         selectedItemColor: const Color(0xFF5B9CF6),
         unselectedItemColor: const Color(0xFFB0B8CC),
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11),
+        selectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 11,
+        ),
         unselectedLabelStyle: const TextStyle(fontSize: 11),
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home), label: '홈'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart_outlined), activeIcon: Icon(Icons.bar_chart), label: '통계'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: '프로필'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
+            label: '홈',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bar_chart_outlined),
+            activeIcon: Icon(Icons.bar_chart),
+            label: '통계',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: '프로필',
+          ),
         ],
       ),
     );
