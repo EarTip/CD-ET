@@ -77,7 +77,8 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _motionSubscription?.cancel();
     _sensitivitySubscription?.cancel();
-    _manager.dispose();
+    // State.dispose는 async가 아니므로 비동기 정리는 fire-and-forget으로 넘긴다.
+    unawaited(_manager.dispose());
     super.dispose();
   }
 

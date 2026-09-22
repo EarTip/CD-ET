@@ -27,6 +27,8 @@ class SoundDetector {
   Interpreter? _interpreter;
   IsolateInterpreter? _isolateInterpreter;
   bool _isInferring = false;
+  bool _disposed    = false;
+  Future<void>? _activeInference;
   bool _isStereo    = false;
   double _threshold = 0.15;
 
@@ -100,6 +102,7 @@ class SoundDetector {
   }
 
   void _onAudioData(Uint8List bytes) {
+    if (_disposed) return;
     if (_isStereo) {
       for (int i = 0; i + 3 < bytes.length; i += 4) {
         int sL = bytes[i]     | (bytes[i + 1] << 8);
@@ -139,7 +142,8 @@ class SoundDetector {
 
       // await 이전에 동기로 플래그를 세워야 가드가 실제로 동작한다.
       _isInferring = true;
-      unawaited(_runInference(winL, winR));
+      _activeInference = _runInference(winL, winR);
+      unawaited(_activeInference);
     }
   }
 
@@ -193,11 +197,16 @@ class SoundDetector {
     return DetectedSound.none;
   }
 
-  void dispose() {
-    _recorder.dispose();
-    _isolateInterpreter?.close();
+  Future<void> dispose() async {
+    _disposed = true;
+    await _recorder.dispose();
+    // isolate가 참조하는 네이티브 인터프리터를 닫기 전에 진행 중인 추론을 기다린다.
+    try {
+      await _activeInference;
+    } catch (_) {}
+    await _isolateInterpreter?.close();
     _interpreter?.close();
-    _controller.close();
-    _levelController.close();
+    await _controller.close();
+    await _levelController.close();
   }
 }

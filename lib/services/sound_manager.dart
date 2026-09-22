@@ -127,9 +127,9 @@ class SoundManager {
     _detector.stop();
   }
 
-  void dispose() {
+  Future<void> dispose() async {
     stopMonitoring();
-    _detector.dispose();
+    await _detector.dispose();
     _activity.dispose();
     _geofence.dispose();
     _tts.dispose();
