@@ -8,6 +8,7 @@ import '../services/activity_service.dart';
 import '../services/geofence_service.dart';
 import '../models/detection_log.dart';
 import '../services/log_repository.dart';
+import 'stats_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -111,47 +112,51 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF2F5FA),
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _onRefresh,
-          color: const Color(0xFF5B9CF6),
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 24),
-                buildHeader(),
-                const SizedBox(height: 24),
-                MainCard(
-                  isListening: _isListening,
-                  onToggle: _isInitialized ? _toggleListening : null,
-                ),
-                if (_isListening) ...[
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      buildMotionBadge(),
-                      const SizedBox(width: 8),
-                      buildSensitivityBadge(),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 20),
-                const Text('감지 항목', style: sectionTitle),
-                const SizedBox(height: 12),
-                AlertGrid(isListening: _isListening),
-                const SizedBox(height: 20),
-                const Text('최근 감지', style: sectionTitle),
-                const SizedBox(height: 12),
-                RecentList(logs: _recentLogs),
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
-        ),
+        child: _currentIndex == 0 ? _buildHomeTab() : const StatsPage(),
       ),
       bottomNavigationBar: buildBottomNav(),
+    );
+  }
+
+  Widget _buildHomeTab() {
+    return RefreshIndicator(
+      onRefresh: _onRefresh,
+      color: const Color(0xFF5B9CF6),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 24),
+            buildHeader(),
+            const SizedBox(height: 24),
+            MainCard(
+              isListening: _isListening,
+              onToggle: _isInitialized ? _toggleListening : null,
+            ),
+            if (_isListening) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  buildMotionBadge(),
+                  const SizedBox(width: 8),
+                  buildSensitivityBadge(),
+                ],
+              ),
+            ],
+            const SizedBox(height: 20),
+            const Text('감지 항목', style: sectionTitle),
+            const SizedBox(height: 12),
+            AlertGrid(isListening: _isListening),
+            const SizedBox(height: 20),
+            const Text('최근 감지', style: sectionTitle),
+            const SizedBox(height: 12),
+            RecentList(logs: _recentLogs),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
     );
   }
 
