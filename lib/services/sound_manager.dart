@@ -170,11 +170,11 @@ class SoundManager {
     _detector.stop();
   }
 
-  void dispose() {
+  Future<void> dispose() async {
     stopMonitoring();
     _settings.removeListener(_syncMic);
     _earphone.dispose();
-    _detector.dispose();
+    await _detector.dispose();
     _activity.dispose();
     _geofence.dispose();
     _tts.dispose();
