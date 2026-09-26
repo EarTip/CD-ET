@@ -8,6 +8,7 @@ import '../services/activity_service.dart';
 import '../services/geofence_service.dart';
 import '../models/detection_log.dart';
 import '../services/log_repository.dart';
+import '../services/tdoa_analyzer.dart';
 import 'stats_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -48,22 +49,29 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _loadRecentLogs() async {
-    final logs = await LogRepository.instance.recent();
-    if (mounted) {
-      setState(() {
-        _recentLogs.clear();
-        _recentLogs.addAll(
-          logs.map(
-            (l) => {'sound': l.sound, 'direction': l.direction, 'time': l.time},
-          ),
-        );
-      });
+    try {
+      final logs = await LogRepository.instance.recent();
+      if (mounted) {
+        setState(() {
+          _recentLogs.clear();
+          _recentLogs.addAll(
+            logs.map(
+              (l) => {
+                'sound': l.sound,
+                'direction': l.direction ?? SoundDirection.unknown,
+                'time': l.time,
+              },
+            ),
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('최근 감지 기록을 불러오지 못했습니다: $e');
     }
   }
 
   Future<void> _onRefresh() async {
-    await Future.delayed(const Duration(milliseconds: 800));
-    setState(() {});
+    await _loadRecentLogs();
   }
 
   Future<void> _toggleListening() async {
@@ -76,14 +84,18 @@ class _HomePageState extends State<HomePage> {
         _sensitivityLevel = SensitivityLevel.normal;
       });
     } else {
-      _manager.onDetected = (event) {
-        LogRepository.instance.insert(
-          DetectionLog(
-            sound: event.sound,
-            direction: event.direction,
-            time: DateTime.now(),
-          ),
-        );
+      _manager.onDetected = (event) async {
+        try {
+          await LogRepository.instance.insert(
+            DetectionLog(
+              sound: event.sound,
+              direction: event.direction,
+              time: DateTime.now(),
+            ),
+          );
+        } catch (e) {
+          debugPrint('감지 기록을 저장하지 못했습니다: $e');
+        }
 
         setState(() {
           _recentLogs.insert(0, {

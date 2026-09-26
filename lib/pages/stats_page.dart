@@ -17,6 +17,8 @@ class _StatsPageState extends State<StatsPage> {
   int _peakHour = -1;
   int _total = 0;
   bool _loading = true;
+  bool _hasError = false;
+  int _loadToken = 0;
 
   static const _colors = [
     Color(0xFFFF6B6B),
@@ -33,21 +35,43 @@ class _StatsPageState extends State<StatsPage> {
   }
 
   Future<void> _loadStats() async {
-    setState(() => _loading = true);
-    final from = _period == StatsPeriod.week
-        ? DateTime.now().subtract(const Duration(days: 7))
-        : DateTime.now().subtract(const Duration(days: 30));
+    final myToken = ++_loadToken;
+    setState(() {
+      _loading = true;
+      _hasError = false;
+    });
+    final from = _period == StatsPeriod.week ? _weekStart() : _monthStart();
 
-    final counts = await LogRepository.instance.countByClass(from);
-    final peak = await LogRepository.instance.peakHour(from);
-    if (mounted) {
-      setState(() {
-        _classCounts = counts;
-        _peakHour = peak;
-        _total = counts.values.fold(0, (a, b) => a + b);
-        _loading = false;
-      });
+    try {
+      final counts = await LogRepository.instance.countByClass(from);
+      final peak = await LogRepository.instance.peakHour(from);
+      if (mounted && myToken == _loadToken) {
+        setState(() {
+          _classCounts = counts;
+          _peakHour = peak;
+          _total = counts.values.fold(0, (a, b) => a + b);
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted && myToken == _loadToken) {
+        setState(() {
+          _loading = false;
+          _hasError = true;
+        });
+      }
     }
+  }
+
+  DateTime _weekStart() {
+    final now = DateTime.now();
+    final monday = now.subtract(Duration(days: now.weekday - 1));
+    return DateTime(monday.year, monday.month, monday.day);
+  }
+
+  DateTime _monthStart() {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, 1);
   }
 
   void _onPeriodChanged(StatsPeriod period) {
@@ -61,6 +85,7 @@ class _StatsPageState extends State<StatsPage> {
     return RefreshIndicator(
       onRefresh: _loadStats,
       child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(20),
         children: [
           SegmentedButton<StatsPeriod>(
@@ -76,6 +101,16 @@ class _StatsPageState extends State<StatsPage> {
             const Padding(
               padding: EdgeInsets.only(top: 60),
               child: Center(child: CircularProgressIndicator()),
+            )
+          else if (_hasError)
+            const Padding(
+              padding: EdgeInsets.only(top: 60),
+              child: Center(
+                child: Text(
+                  '통계를 불러오지 못했어요. 다시 시도해주세요.',
+                  style: TextStyle(color: Colors.grey),
+                ),
+              ),
             )
           else if (_total == 0)
             Padding(
