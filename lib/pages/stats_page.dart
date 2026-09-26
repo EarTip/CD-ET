@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../services/log_repository.dart';
+import '../services/settings_service.dart';
+import '../services/sound_detector.dart';
 
 enum StatsPeriod { week, month }
+
+const _kBlue = Color(0xFF5B9CF6);
+const _kTextDark = Color(0xFF1A1A2E);
+const _kTextGrey = Color(0xFF8A8FA8);
 
 class StatsPage extends StatefulWidget {
   const StatsPage({super.key});
@@ -21,9 +27,9 @@ class _StatsPageState extends State<StatsPage> {
   int _loadToken = 0;
 
   static const _colors = [
-    Color(0xFFFF6B6B),
     Color(0xFF5B9CF6),
-    Color(0xFFFFA94D),
+    Color(0xFF3D6FD1),
+    Color(0xFF8AC4F7),
     Color(0xFF63E6BE),
     Color(0xFFB197FC),
   ];
@@ -84,23 +90,20 @@ class _StatsPageState extends State<StatsPage> {
   Widget build(BuildContext context) {
     return RefreshIndicator(
       onRefresh: _loadStats,
+      color: _kBlue,
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
         children: [
-          SegmentedButton<StatsPeriod>(
-            segments: const [
-              ButtonSegment(value: StatsPeriod.week, label: Text('주간')),
-              ButtonSegment(value: StatsPeriod.month, label: Text('월간')),
-            ],
-            selected: {_period},
-            onSelectionChanged: (s) => _onPeriodChanged(s.first),
-          ),
+          const SizedBox(height: 24),
+          _buildPeriodToggle(),
           const SizedBox(height: 24),
           if (_loading)
             const Padding(
               padding: EdgeInsets.only(top: 60),
-              child: Center(child: CircularProgressIndicator()),
+              child: Center(
+                child: CircularProgressIndicator(color: _kBlue),
+              ),
             )
           else if (_hasError)
             const Padding(
@@ -108,7 +111,7 @@ class _StatsPageState extends State<StatsPage> {
               child: Center(
                 child: Text(
                   '통계를 불러오지 못했어요. 다시 시도해주세요.',
-                  style: TextStyle(color: Colors.grey),
+                  style: TextStyle(fontSize: 13, color: _kTextGrey),
                 ),
               ),
             )
@@ -120,38 +123,114 @@ class _StatsPageState extends State<StatsPage> {
                   _period == StatsPeriod.week
                       ? '이번 주 감지 기록이 없어요'
                       : '이번 달 감지 기록이 없어요',
-                  style: const TextStyle(color: Colors.grey),
+                  style: const TextStyle(fontSize: 13, color: _kTextGrey),
                 ),
               ),
             )
           else ...[
             Text(
               '${_period == StatsPeriod.week ? "이번 주" : "이번 달"} 총 $_total회 감지',
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: _kTextDark,
+              ),
             ),
             if (_peakHour >= 0)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '가장 많이 감지된 시간대: $_peakHour시대',
-                  style: const TextStyle(color: Colors.grey),
+                  style: const TextStyle(fontSize: 13, color: _kTextGrey),
                 ),
               ),
             const SizedBox(height: 24),
-            SizedBox(
-              height: 200,
-              child: PieChart(
-                PieChartData(
-                  sectionsSpace: 2,
-                  centerSpaceRadius: 40,
-                  sections: _buildSections(),
-                ),
-              ),
-            ),
+            _buildChartCard(),
             const SizedBox(height: 20),
             ..._buildLegend(),
           ],
+          const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+
+  Widget _buildPeriodToggle() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(child: _periodPill('주간', StatsPeriod.week)),
+          const SizedBox(width: 4),
+          Expanded(child: _periodPill('월간', StatsPeriod.month)),
+        ],
+      ),
+    );
+  }
+
+  Widget _periodPill(String label, StatsPeriod period) {
+    final selected = _period == period;
+    return GestureDetector(
+      onTap: () => _onPeriodChanged(period),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? _kBlue.withValues(alpha: 0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border: selected
+              ? Border.all(color: _kBlue.withValues(alpha: 0.3))
+              : null,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: selected ? _kBlue : _kTextGrey,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildChartCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        height: 200,
+        child: PieChart(
+          PieChartData(
+            sectionsSpace: 2,
+            centerSpaceRadius: 40,
+            sections: _buildSections(),
+          ),
+        ),
       ),
     );
   }
@@ -179,24 +258,58 @@ class _StatsPageState extends State<StatsPage> {
     final entries = _classCounts.entries.toList();
     return List.generate(entries.length, (i) {
       final e = entries[i];
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+      final sound = DetectedSound.values.byName(e.key);
+      final color = _colors[i % _colors.length];
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
         child: Row(
           children: [
             Container(
-              width: 12,
-              height: 12,
+              width: 40,
+              height: 40,
               decoration: BoxDecoration(
-                color: _colors[i % _colors.length],
-                shape: BoxShape.circle,
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(_iconFor(sound), color: color, size: 20),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                sound.label,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: _kTextDark,
+                ),
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(child: Text(e.key)),
-            Text('${e.value}회', style: const TextStyle(color: Colors.grey)),
+            Text(
+              '${e.value}회',
+              style: const TextStyle(fontSize: 13, color: _kTextGrey),
+            ),
           ],
         ),
       );
     });
   }
+
+  IconData _iconFor(DetectedSound sound) => switch (sound) {
+        DetectedSound.horn => Icons.car_crash_outlined,
+        DetectedSound.siren => Icons.emergency_outlined,
+        DetectedSound.brake => Icons.directions_car_outlined,
+        DetectedSound.none => Icons.volume_off_outlined,
+      };
 }

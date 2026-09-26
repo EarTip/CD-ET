@@ -10,6 +10,8 @@ import '../models/detection_log.dart';
 import '../services/log_repository.dart';
 import '../services/tdoa_analyzer.dart';
 import 'stats_page.dart';
+import '../services/settings_service.dart';
+import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -24,10 +26,13 @@ class _HomePageState extends State<HomePage> {
   bool _isInitialized = false;
   MotionState _motionState = MotionState.unknown;
   SensitivityLevel _sensitivityLevel = SensitivityLevel.normal;
+  bool _earphoneConnected = false;
 
   final SoundManager _manager = SoundManager();
+  final SettingsService _settings = SettingsService.instance;
   StreamSubscription<MotionState>? _motionSubscription;
   StreamSubscription<SensitivityLevel>? _sensitivitySubscription;
+  StreamSubscription<bool>? _earphoneSubscription;
   final List<Map<String, dynamic>> _recentLogs = [];
 
   @override
@@ -41,7 +46,17 @@ class _HomePageState extends State<HomePage> {
     _sensitivitySubscription = _manager.sensitivityStream.listen(
       (level) => setState(() => _sensitivityLevel = level),
     );
+    _earphoneSubscription = _manager.earphoneStream.listen(
+      (connected) => setState(() => _earphoneConnected = connected),
+    );
   }
+
+  /// 감지는 켜져 있지만 마이크가 실제로는 대기 상태인지 여부.
+  /// 정지 상태이거나, 이어폰 전용 모드에서 이어폰이 연결되지 않은 경우.
+  bool get _micWaiting =>
+      _isListening &&
+      (_motionState == MotionState.still ||
+          (_settings.earphoneOnly && !_earphoneConnected));
 
   Future<void> _initAsync() async {
     await _manager.init();
@@ -107,6 +122,7 @@ class _HomePageState extends State<HomePage> {
         });
       };
       await _manager.startMonitoring();
+      _earphoneConnected = _manager.earphoneConnected;
     }
     setState(() => _isListening = !_isListening);
   }
@@ -115,7 +131,9 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _motionSubscription?.cancel();
     _sensitivitySubscription?.cancel();
-    _manager.dispose();
+    _earphoneSubscription?.cancel();
+    // State.dispose는 async가 아니므로 비동기 정리는 fire-and-forget으로 넘긴다.
+    unawaited(_manager.dispose());
     super.dispose();
   }
 
@@ -149,18 +167,29 @@ class _HomePageState extends State<HomePage> {
             ),
             if (_isListening) ...[
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  buildMotionBadge(),
-                  const SizedBox(width: 8),
-                  buildSensitivityBadge(),
-                ],
+              ListenableBuilder(
+                listenable: _settings,
+                builder: (context, _) => Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    buildMotionBadge(),
+                    buildSensitivityBadge(),
+                    if (_settings.earphoneOnly && !_earphoneConnected) buildEarphoneBadge(),
+                  ],
+                ),
               ),
             ],
             const SizedBox(height: 20),
             const Text('감지 항목', style: sectionTitle),
             const SizedBox(height: 12),
-            AlertGrid(isListening: _isListening),
+            ListenableBuilder(
+              listenable: _settings,
+              builder: (context, _) => AlertGrid(
+                isListening: _isListening,
+                isWaiting: _micWaiting,
+              ),
+            ),
             const SizedBox(height: 20),
             const Text('최근 감지', style: sectionTitle),
             const SizedBox(height: 12),
@@ -207,6 +236,26 @@ class _HomePageState extends State<HomePage> {
               color: color,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildEarphoneBadge() {
+    const color = Color(0xFFFF9500);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.headset_off_outlined, size: 16, color: color),
+          SizedBox(width: 8),
+          Text('이어폰 미연결', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
         ],
       ),
     );
@@ -277,24 +326,25 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.06),
-                blurRadius: 10,
-                offset: const Offset(0, 2),
-              ),
-            ],
+        GestureDetector(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SettingsPage()),
           ),
-          child: const Icon(
-            Icons.settings_outlined,
-            color: Color(0xFF5B9CF6),
-            size: 22,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.06),
+                  blurRadius: 10,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.settings_outlined, color: Color(0xFF5B9CF6), size: 22),
           ),
         ),
       ],
