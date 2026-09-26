@@ -104,58 +104,64 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF2F5FA),
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _onRefresh,
-          color: const Color(0xFF5B9CF6),
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 24),
-                buildHeader(),
-                const SizedBox(height: 24),
-                MainCard(
-                  isListening: _isListening,
-                  onToggle: _isInitialized ? _toggleListening : null,
-                ),
-                if (_isListening) ...[
-                  const SizedBox(height: 12),
-                  ListenableBuilder(
-                    listenable: _settings,
-                    builder: (context, _) => Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        buildMotionBadge(),
-                        buildSensitivityBadge(),
-                        if (_settings.earphoneOnly && !_earphoneConnected) buildEarphoneBadge(),
-                      ],
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-                const Text('감지 항목', style: sectionTitle),
-                const SizedBox(height: 12),
-                ListenableBuilder(
-                  listenable: _settings,
-                  builder: (context, _) => AlertGrid(
-                    isListening: _isListening,
-                    isWaiting: _micWaiting,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                const Text('최근 감지', style: sectionTitle),
-                const SizedBox(height: 12),
-                RecentList(logs: _recentLogs),
-                const SizedBox(height: 20),
-              ],
-            ),
-          ),
-        ),
+        // 설정 탭은 자체 Scaffold를 가지므로 탭 인덱스에 따라 body만 교체한다.
+        // 통계 탭은 아직 구현 전이라 홈 화면을 그대로 보여준다.
+        child: _currentIndex == 2 ? const SettingsPage() : _buildHomeTab(),
       ),
       bottomNavigationBar: buildBottomNav(),
+    );
+  }
+
+  Widget _buildHomeTab() {
+    return RefreshIndicator(
+      onRefresh: _onRefresh,
+      color: const Color(0xFF5B9CF6),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 24),
+            buildHeader(),
+            const SizedBox(height: 24),
+            MainCard(
+              isListening: _isListening,
+              onToggle: _isInitialized ? _toggleListening : null,
+            ),
+            if (_isListening) ...[
+              const SizedBox(height: 12),
+              ListenableBuilder(
+                listenable: _settings,
+                builder: (context, _) => Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    buildMotionBadge(),
+                    buildSensitivityBadge(),
+                    if (_settings.earphoneOnly && !_earphoneConnected) buildEarphoneBadge(),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 20),
+            const Text('감지 항목', style: sectionTitle),
+            const SizedBox(height: 12),
+            ListenableBuilder(
+              listenable: _settings,
+              builder: (context, _) => AlertGrid(
+                isListening: _isListening,
+                isWaiting: _micWaiting,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text('최근 감지', style: sectionTitle),
+            const SizedBox(height: 12),
+            RecentList(logs: _recentLogs),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
     );
   }
 
@@ -237,47 +243,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'EarTips',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF1A1A2E),
-              ),
-            ),
-            SizedBox(height: 2),
-            Text(
-              '주변 소리를 감지하고 있어요',
-              style: TextStyle(fontSize: 13, color: Color(0xFF8A8FA8)),
-            ),
-          ],
+        Text(
+          'EarTips',
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF1A1A2E),
+          ),
         ),
-        GestureDetector(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsPage()),
-          ),
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.settings_outlined, color: Color(0xFF5B9CF6), size: 22),
-          ),
+        SizedBox(height: 2),
+        Text(
+          '주변 소리를 감지하고 있어요',
+          style: TextStyle(fontSize: 13, color: Color(0xFF8A8FA8)),
         ),
       ],
     );
@@ -307,7 +287,7 @@ class _HomePageState extends State<HomePage> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home), label: '홈'),
           BottomNavigationBarItem(icon: Icon(Icons.bar_chart_outlined), activeIcon: Icon(Icons.bar_chart), label: '통계'),
-          BottomNavigationBarItem(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: '프로필'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings_outlined), activeIcon: Icon(Icons.settings), label: '설정'),
         ],
       ),
     );

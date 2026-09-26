@@ -115,33 +115,9 @@ class SettingsPage extends StatelessWidget {
   static const sectionWarning = TextStyle(fontSize: 12, color: Color(0xFFFF9500), fontWeight: FontWeight.w600);
 
   Widget buildHeader(BuildContext context) {
-    return Row(
-      children: [
-        GestureDetector(
-          onTap: () => Navigator.of(context).pop(),
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.arrow_back_ios_new_rounded, color: _kBlue, size: 20),
-          ),
-        ),
-        const SizedBox(width: 16),
-        const Text(
-          '설정',
-          style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _kTextDark),
-        ),
-      ],
+    return const Text(
+      '설정',
+      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _kTextDark),
     );
   }
 }
