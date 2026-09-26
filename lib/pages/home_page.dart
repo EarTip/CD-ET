@@ -138,7 +138,13 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 20),
                 const Text('감지 항목', style: sectionTitle),
                 const SizedBox(height: 12),
-                AlertGrid(isListening: _isListening, isWaiting: _micWaiting),
+                ListenableBuilder(
+                  listenable: _settings,
+                  builder: (context, _) => AlertGrid(
+                    isListening: _isListening,
+                    isWaiting: _micWaiting,
+                  ),
+                ),
                 const SizedBox(height: 20),
                 const Text('최근 감지', style: sectionTitle),
                 const SizedBox(height: 12),
