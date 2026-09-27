@@ -12,6 +12,11 @@ const _hornClasses  = [27, 302, 382, 390, 394];
 const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
 const _brakeClasses = [308];
 
+// 실내/외 판단용 ambient 교통음 클래스 (실외 배경 소음)
+// 실제 모델에서 검증 필요 — 실외 오디오 샘플로 top-class 확인 권장
+const _trafficAmbientClasses = [300, 301, 304, 305, 308]; // Vehicle, Car, Engine, Motor vehicle, Truck
+const _ambientThreshold      = 0.08; // 배경음이라 전경음보다 낮은 임계값
+
 class SoundDetector {
   final AudioRecorder _recorder = AudioRecorder();
   final _controller      = StreamController<DetectionEvent>.broadcast();
@@ -30,7 +35,13 @@ class SoundDetector {
   bool _disposed    = false;
   Future<void>? _activeInference;
   bool _isStereo    = false;
+  bool _isRunning   = false;
+  int  _startCount  = 0; // 참조 카운트 — 여러 호출자가 동시에 필요로 할 수 있음
+  Future<void>? _startingFuture; // 시작 작업 직렬화 (동시 start() 호출 시 같은 작업 공유)
   double _threshold = 0.15;
+
+  // probe 중에만 설정되는 콜백 — 추론 결과를 외부로 전달
+  void Function(List<double> scores)? _onScores;
 
   Stream<DetectionEvent> get detectionStream => _controller.stream;
   Stream<double> get audioLevelStream => _levelController.stream;
@@ -45,7 +56,51 @@ class SoundDetector {
     debugPrint('✅ 모델 로드 완료');
   }
 
+  /// 참조 카운트 기반 시작 — 여러 호출자(mic/probe)가 동시에 필요로 해도 안전.
+  /// 이미 시작 작업이 진행 중이면 그 작업을 공유해서 중복 startStream() 방지.
   Future<void> start() async {
+    _startCount++;
+    if (_startingFuture != null) {
+      await _startingFuture;
+      return;
+    }
+    if (_isRunning) return;
+
+    final future = _beginStream();
+    _startingFuture = future;
+    try {
+      await future;
+    } catch (e) {
+      // 시작 실패 시 이 시작 시도에 걸린 참조는 무효 — 다음 재시도를 허용
+      _startCount = 0;
+      rethrow;
+    } finally {
+      _startingFuture = null;
+    }
+  }
+
+  /// 참조 카운트가 0이 될 때만 실제로 정지 — 다른 호출자가 아직 필요로 하면 유지
+  Future<void> stop() async {
+    if (_startCount == 0) return;
+    _startCount--;
+    if (_startCount > 0) return;
+
+    // 아직 시작(_beginStream) 작업이 진행 중이면 여기서 정지하지 않음 —
+    // 시작이 끝난 뒤 _beginStream()이 카운트를 다시 확인해서 직접 정리한다.
+    if (_startingFuture != null) return;
+
+    await _stopStream();
+  }
+
+  Future<void> _stopStream() async {
+    _isRunning = false;
+    await _recorder.stop();
+    _bufL.clear();
+    _bufR.clear();
+    if (!_levelController.isClosed) _levelController.add(0.0);
+  }
+
+  Future<void> _beginStream() async {
     if (_interpreter == null) await init();
 
     Stream<Uint8List> stream;
@@ -92,13 +147,12 @@ class SoundDetector {
     }
     debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo)');
     stream.listen(_onAudioData);
-  }
+    _isRunning = true;
 
-  Future<void> stop() async {
-    await _recorder.stop();
-    _bufL.clear();
-    _bufR.clear();
-    if (!_levelController.isClosed) _levelController.add(0.0);
+    // 시작 작업 도중 참조가 전부 사라졌다면(대기 중 stop() 호출) 바로 정리
+    if (_startCount == 0) {
+      await _stopStream();
+    }
   }
 
   void _onAudioData(Uint8List bytes) {
@@ -163,6 +217,8 @@ class SoundDetector {
 
       final scores = output[0];
 
+      _onScores?.call(scores); // probe 중에만 호출됨
+
       if (kDebugMode) {
         final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
           ..sort((a, b) => b.value.compareTo(a.value));
@@ -195,6 +251,31 @@ class SoundDetector {
     if (hornScore  > _threshold && hornScore  >= sirenScore && hornScore  >= brakeScore) return DetectedSound.horn;
     if (brakeScore > _threshold) return DetectedSound.brake;
     return DetectedSound.none;
+  }
+
+  /// IndoorOutdoorService에서 주입받아 실내/외 판단에 사용
+  /// 3초간 마이크를 켜서 교통 ambient 클래스가 감지되면 true 반환
+  Future<bool> probeTrafficAmbient() async {
+    if (_interpreter == null) await init();
+
+    bool detected = false;
+
+    // 참조 카운트로 시작 — 이미 다른 곳(mic)에서 켜둔 상태면 카운트만 증가하고 유지,
+    // 대기 중 외부에서 start()가 걸려도 stop()에서 카운트가 남아있으면 실제로는 안 꺼짐
+    await start();
+
+    _onScores = (scores) {
+      final maxAmbient = _trafficAmbientClasses.map((i) => scores[i]).reduce(max);
+      debugPrint('🎙️ ambient max=${maxAmbient.toStringAsFixed(3)} threshold=$_ambientThreshold');
+      if (maxAmbient > _ambientThreshold) detected = true;
+    };
+
+    await Future.delayed(const Duration(seconds: 3));
+    _onScores = null;
+
+    await stop();
+
+    return detected;
   }
 
   Future<void> dispose() async {

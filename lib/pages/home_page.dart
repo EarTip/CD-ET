@@ -6,6 +6,7 @@ import '../widgets/recent_list.dart';
 import '../services/sound_manager.dart';
 import '../services/activity_service.dart';
 import '../services/geofence_service.dart';
+import '../services/indoor_outdoor_service.dart';
 import '../services/settings_service.dart';
 import 'settings_page.dart';
 
@@ -22,12 +23,14 @@ class _HomePageState extends State<HomePage> {
   bool _isInitialized = false;
   MotionState _motionState = MotionState.unknown;
   SensitivityLevel _sensitivityLevel = SensitivityLevel.normal;
+  IndoorOutdoorState _indoorState = IndoorOutdoorState.indoor;
   bool _earphoneConnected = false;
 
   final SoundManager _manager = SoundManager();
   final SettingsService _settings = SettingsService.instance;
   StreamSubscription<MotionState>? _motionSubscription;
   StreamSubscription<SensitivityLevel>? _sensitivitySubscription;
+  StreamSubscription<IndoorOutdoorState>? _indoorOutdoorSubscription;
   StreamSubscription<bool>? _earphoneSubscription;
   final List<Map<String, dynamic>> _recentLogs = [];
 
@@ -40,6 +43,9 @@ class _HomePageState extends State<HomePage> {
     );
     _sensitivitySubscription = _manager.sensitivityStream.listen(
       (level) => setState(() => _sensitivityLevel = level),
+    );
+    _indoorOutdoorSubscription = _manager.indoorOutdoorStream.listen(
+      (state) => setState(() => _indoorState = state),
     );
     _earphoneSubscription = _manager.earphoneStream.listen(
       (connected) => setState(() => _earphoneConnected = connected),
@@ -64,13 +70,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _toggleListening() async {
-    print('🔘 _toggleListening 호출됨, 현재 isListening=$_isListening');
     if (_isListening) {
       await _manager.stopMonitoring();
       _manager.onDetected = null;
       setState(() {
         _motionState = MotionState.unknown;
         _sensitivityLevel = SensitivityLevel.normal;
+        _indoorState = IndoorOutdoorState.indoor;
       });
     } else {
       _manager.onDetected = (event) {
@@ -93,6 +99,7 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _motionSubscription?.cancel();
     _sensitivitySubscription?.cancel();
+    _indoorOutdoorSubscription?.cancel();
     _earphoneSubscription?.cancel();
     // State.dispose는 async가 아니므로 비동기 정리는 fire-and-forget으로 넘긴다.
     unawaited(_manager.dispose());
@@ -128,6 +135,7 @@ class _HomePageState extends State<HomePage> {
                       spacing: 8,
                       runSpacing: 8,
                       children: [
+                        buildOutdoorBadge(),
                         buildMotionBadge(),
                         buildSensitivityBadge(),
                         if (_settings.earphoneOnly && !_earphoneConnected) buildEarphoneBadge(),
@@ -212,9 +220,40 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget buildOutdoorBadge() {
+    final (icon, label, color) = switch (_indoorState) {
+      IndoorOutdoorState.outdoor  => (Icons.wb_sunny_outlined, '실외', const Color(0xFF34C759)),
+      IndoorOutdoorState.checking => (Icons.gps_fixed, '위치 확인 중...', const Color(0xFF5B9CF6)),
+      IndoorOutdoorState.indoor   => (Icons.home_outlined, '실내 · 마이크 대기', const Color(0xFF8A8FA8)),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget buildMotionBadge() {
+    final micActive = _motionState == MotionState.moving &&
+        _indoorState == IndoorOutdoorState.outdoor;
     final (icon, label, color) = switch (_motionState) {
-      MotionState.moving  => (Icons.directions_walk, '이동 중 · 마이크 활성', const Color(0xFF34C759)),
+      MotionState.moving when micActive =>
+        (Icons.directions_walk, '이동 중 · 마이크 활성', const Color(0xFF34C759)),
+      MotionState.moving  => (Icons.directions_walk, '이동 중 · 마이크 대기', const Color(0xFF8A8FA8)),
       MotionState.still   => (Icons.pause_circle_outline, '정지 · 마이크 대기', const Color(0xFFFF9500)),
       MotionState.unknown => (Icons.sensors, '활동 감지 중...', const Color(0xFF8A8FA8)),
     };
