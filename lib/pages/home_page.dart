@@ -6,8 +6,7 @@ import '../widgets/recent_list.dart';
 import '../services/sound_manager.dart';
 import '../services/activity_service.dart';
 import '../services/geofence_service.dart';
-import '../services/settings_service.dart';
-import 'settings_page.dart';
+import '../services/indoor_outdoor_service.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -22,13 +21,12 @@ class _HomePageState extends State<HomePage> {
   bool _isInitialized = false;
   MotionState _motionState = MotionState.unknown;
   SensitivityLevel _sensitivityLevel = SensitivityLevel.normal;
-  bool _earphoneConnected = false;
+  IndoorOutdoorState _indoorState = IndoorOutdoorState.indoor;
 
   final SoundManager _manager = SoundManager();
-  final SettingsService _settings = SettingsService.instance;
   StreamSubscription<MotionState>? _motionSubscription;
   StreamSubscription<SensitivityLevel>? _sensitivitySubscription;
-  StreamSubscription<bool>? _earphoneSubscription;
+  StreamSubscription<IndoorOutdoorState>? _indoorOutdoorSubscription;
   final List<Map<String, dynamic>> _recentLogs = [];
 
   @override
@@ -41,17 +39,10 @@ class _HomePageState extends State<HomePage> {
     _sensitivitySubscription = _manager.sensitivityStream.listen(
       (level) => setState(() => _sensitivityLevel = level),
     );
-    _earphoneSubscription = _manager.earphoneStream.listen(
-      (connected) => setState(() => _earphoneConnected = connected),
+    _indoorOutdoorSubscription = _manager.indoorOutdoorStream.listen(
+      (state) => setState(() => _indoorState = state),
     );
   }
-
-  /// 감지는 켜져 있지만 마이크가 실제로는 대기 상태인지 여부.
-  /// 정지 상태이거나, 이어폰 전용 모드에서 이어폰이 연결되지 않은 경우.
-  bool get _micWaiting =>
-      _isListening &&
-      (_motionState == MotionState.still ||
-          (_settings.earphoneOnly && !_earphoneConnected));
 
   Future<void> _initAsync() async {
     await _manager.init();
@@ -64,13 +55,13 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _toggleListening() async {
-    print('🔘 _toggleListening 호출됨, 현재 isListening=$_isListening');
     if (_isListening) {
       await _manager.stopMonitoring();
       _manager.onDetected = null;
       setState(() {
         _motionState = MotionState.unknown;
         _sensitivityLevel = SensitivityLevel.normal;
+        _indoorState = IndoorOutdoorState.indoor;
       });
     } else {
       _manager.onDetected = (event) {
@@ -84,7 +75,6 @@ class _HomePageState extends State<HomePage> {
         });
       };
       await _manager.startMonitoring();
-      _earphoneConnected = _manager.earphoneConnected;
     }
     setState(() => _isListening = !_isListening);
   }
@@ -93,9 +83,8 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _motionSubscription?.cancel();
     _sensitivitySubscription?.cancel();
-    _earphoneSubscription?.cancel();
-    // State.dispose는 async가 아니므로 비동기 정리는 fire-and-forget으로 넘긴다.
-    unawaited(_manager.dispose());
+    _indoorOutdoorSubscription?.cancel();
+    _manager.dispose();
     super.dispose();
   }
 
@@ -122,29 +111,20 @@ class _HomePageState extends State<HomePage> {
                 ),
                 if (_isListening) ...[
                   const SizedBox(height: 12),
-                  ListenableBuilder(
-                    listenable: _settings,
-                    builder: (context, _) => Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        buildMotionBadge(),
-                        buildSensitivityBadge(),
-                        if (_settings.earphoneOnly && !_earphoneConnected) buildEarphoneBadge(),
-                      ],
-                    ),
+                  Row(
+                    children: [
+                      Flexible(child: buildOutdoorBadge()),
+                      const SizedBox(width: 8),
+                      Flexible(child: buildMotionBadge()),
+                    ],
                   ),
+                  const SizedBox(height: 8),
+                  buildSensitivityBadge(),
                 ],
                 const SizedBox(height: 20),
                 const Text('감지 항목', style: sectionTitle),
                 const SizedBox(height: 12),
-                ListenableBuilder(
-                  listenable: _settings,
-                  builder: (context, _) => AlertGrid(
-                    isListening: _isListening,
-                    isWaiting: _micWaiting,
-                  ),
-                ),
+                AlertGrid(isListening: _isListening),
                 const SizedBox(height: 20),
                 const Text('최근 감지', style: sectionTitle),
                 const SizedBox(height: 12),
@@ -192,8 +172,12 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget buildEarphoneBadge() {
-    const color = Color(0xFFFF9500);
+  Widget buildOutdoorBadge() {
+    final (icon, label, color) = switch (_indoorState) {
+      IndoorOutdoorState.outdoor  => (Icons.wb_sunny_outlined, '실외', const Color(0xFF34C759)),
+      IndoorOutdoorState.checking => (Icons.gps_fixed, '위치 확인 중...', const Color(0xFF5B9CF6)),
+      IndoorOutdoorState.indoor   => (Icons.home_outlined, '실내 · 마이크 대기', const Color(0xFF8A8FA8)),
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
@@ -201,20 +185,30 @@ class _HomePageState extends State<HomePage> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.headset_off_outlined, size: 16, color: color),
-          SizedBox(width: 8),
-          Text('이어폰 미연결', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget buildMotionBadge() {
+    final micActive = _motionState == MotionState.moving &&
+        _indoorState == IndoorOutdoorState.outdoor;
     final (icon, label, color) = switch (_motionState) {
-      MotionState.moving  => (Icons.directions_walk, '이동 중 · 마이크 활성', const Color(0xFF34C759)),
+      MotionState.moving when micActive =>
+        (Icons.directions_walk, '이동 중 · 마이크 활성', const Color(0xFF34C759)),
+      MotionState.moving  => (Icons.directions_walk, '이동 중 · 마이크 대기', const Color(0xFF8A8FA8)),
       MotionState.still   => (Icons.pause_circle_outline, '정지 · 마이크 대기', const Color(0xFFFF9500)),
       MotionState.unknown => (Icons.sensors, '활동 감지 중...', const Color(0xFF8A8FA8)),
     };
@@ -230,7 +224,13 @@ class _HomePageState extends State<HomePage> {
         children: [
           Icon(icon, size: 16, color: color),
           const SizedBox(width: 8),
-          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );
@@ -258,26 +258,21 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        GestureDetector(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsPage()),
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.06),
+                blurRadius: 10,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.settings_outlined, color: Color(0xFF5B9CF6), size: 22),
-          ),
+          child: const Icon(Icons.settings_outlined, color: Color(0xFF5B9CF6), size: 22),
         ),
       ],
     );
