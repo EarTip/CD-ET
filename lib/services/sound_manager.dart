@@ -145,7 +145,13 @@ class SoundManager {
   Future<void> _startMic() async {
     if (_micActive || !_userEnabled) return;
     _micActive = true;
-    await _detector.start();
+    try {
+      await _detector.start();
+    } catch (e) {
+      debugPrint('❌ 마이크 시작 실패: $e');
+      _micActive = false;
+      return;
+    }
     if (!_micActive) {
       await _detector.stop();
       return;

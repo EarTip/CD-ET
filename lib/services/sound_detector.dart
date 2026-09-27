@@ -36,7 +36,8 @@ class SoundDetector {
   Future<void>? _activeInference;
   bool _isStereo    = false;
   bool _isRunning   = false;
-  int  _runEpoch    = 0; // probe 중 외부 start() 재호출로 스트림 소유권이 넘어갔는지 감지
+  int  _startCount  = 0; // 참조 카운트 — 여러 호출자가 동시에 필요로 할 수 있음
+  Future<void>? _startingFuture; // 시작 작업 직렬화 (동시 start() 호출 시 같은 작업 공유)
   double _threshold = 0.15;
 
   // probe 중에만 설정되는 콜백 — 추론 결과를 외부로 전달
@@ -55,10 +56,44 @@ class SoundDetector {
     debugPrint('✅ 모델 로드 완료');
   }
 
+  /// 참조 카운트 기반 시작 — 여러 호출자(mic/probe)가 동시에 필요로 해도 안전.
+  /// 이미 시작 작업이 진행 중이면 그 작업을 공유해서 중복 startStream() 방지.
   Future<void> start() async {
+    _startCount++;
+    if (_startingFuture != null) {
+      await _startingFuture;
+      return;
+    }
+    if (_isRunning) return;
+
+    final future = _beginStream();
+    _startingFuture = future;
+    try {
+      await future;
+    } catch (e) {
+      // 시작 실패 시 이 시작 시도에 걸린 참조는 무효 — 다음 재시도를 허용
+      _startCount = 0;
+      rethrow;
+    } finally {
+      _startingFuture = null;
+    }
+  }
+
+  /// 참조 카운트가 0이 될 때만 실제로 정지 — 다른 호출자가 아직 필요로 하면 유지
+  Future<void> stop() async {
+    if (_startCount == 0) return;
+    _startCount--;
+    if (_startCount > 0) return;
+
+    _isRunning = false;
+    await _recorder.stop();
+    _bufL.clear();
+    _bufR.clear();
+    if (!_levelController.isClosed) _levelController.add(0.0);
+  }
+
+  Future<void> _beginStream() async {
     if (_interpreter == null) await init();
-    _isRunning = true;
-    _runEpoch++;
 
     Stream<Uint8List> stream;
     try {
@@ -104,14 +139,7 @@ class SoundDetector {
     }
     debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo)');
     stream.listen(_onAudioData);
-  }
-
-  Future<void> stop() async {
-    _isRunning = false;
-    await _recorder.stop();
-    _bufL.clear();
-    _bufR.clear();
-    if (!_levelController.isClosed) _levelController.add(0.0);
+    _isRunning = true;
   }
 
   void _onAudioData(Uint8List bytes) {
@@ -217,11 +245,11 @@ class SoundDetector {
   Future<bool> probeTrafficAmbient() async {
     if (_interpreter == null) await init();
 
-    final wasRunning = _isRunning;
-    bool detected    = false;
+    bool detected = false;
 
-    if (!wasRunning) await start();
-    final probeEpoch = _runEpoch;
+    // 참조 카운트로 시작 — 이미 다른 곳(mic)에서 켜둔 상태면 카운트만 증가하고 유지,
+    // 대기 중 외부에서 start()가 걸려도 stop()에서 카운트가 남아있으면 실제로는 안 꺼짐
+    await start();
 
     _onScores = (scores) {
       final maxAmbient = _trafficAmbientClasses.map((i) => scores[i]).reduce(max);
@@ -232,8 +260,7 @@ class SoundDetector {
     await Future.delayed(const Duration(seconds: 3));
     _onScores = null;
 
-    // 대기 중 외부에서 start()가 다시 호출돼 스트림 소유권이 넘어갔다면 정지하지 않음
-    if (!wasRunning && _runEpoch == probeEpoch) await stop();
+    await stop();
 
     return detected;
   }
