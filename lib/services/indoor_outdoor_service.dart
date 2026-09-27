@@ -66,7 +66,16 @@ class IndoorOutdoorService {
 
     // 2단계: YAMNet ambient probe (3초)
     debugPrint('🎙️ YAMNet probe 시작 (GPS 불확실/타임아웃)');
-    final soundOutdoor = await _ambientProbe();
+    bool soundOutdoor;
+    try {
+      soundOutdoor = await _ambientProbe();
+    } catch (_) {
+      if (gen != _generation) return;
+      debugPrint('🎙️ YAMNet probe 실패 → 실내, 쿨다운 ${_cooldownDuration.inMinutes}분');
+      _emit(IndoorOutdoorState.indoor);
+      _startCooldown();
+      return;
+    }
     if (gen != _generation) return; // stale 결과 무시
 
     if (soundOutdoor) {
@@ -153,7 +162,18 @@ class IndoorOutdoorService {
 
     final gen = ++_generation;
     debugPrint('🎙️ 정지 중 실외 재확인 probe 시작');
-    final stillOutdoor = await _ambientProbe();
+    bool stillOutdoor;
+    try {
+      stillOutdoor = await _ambientProbe();
+    } catch (_) {
+      if (gen != _generation) return;
+      if (!_stationary || _state != IndoorOutdoorState.outdoor) return;
+      debugPrint('🎙️ 재확인 probe 실패 → 실내로 전환');
+      _stopOutdoorMonitoring();
+      _emit(IndoorOutdoorState.indoor);
+      _startCooldown();
+      return;
+    }
     if (gen != _generation) return; // stale (그 사이 재이동 등으로 무효화됨)
     if (!_stationary || _state != IndoorOutdoorState.outdoor) return;
 

@@ -3,14 +3,14 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
-import 'package:flutter_litert/flutter_litert.dart';
+import 'package:tflite_flutter/tflite_flutter.dart';
 import 'tdoa_analyzer.dart';
 
 export 'tdoa_analyzer.dart' show DetectedSound, SoundDirection, SoundDirectionInfo, DetectionEvent;
 
-const _hornClasses  = [302, 303, 312]; // Vehicle horn, Toot, Air horn
-const _sirenClasses = [316, 317, 318, 319, 390, 391]; // Emergency vehicle, Police/Ambulance/Fire siren, Siren, Civil defense
-const _brakeClasses = [306, 307, 311]; // Skidding, Tire squeal, Air brake
+const _hornClasses  = [27, 302, 382, 390, 394];
+const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
+const _brakeClasses = [308];
 
 // 실내/외 판단용 ambient 교통음 클래스 (실외 배경 소음)
 // 실제 모델에서 검증 필요 — 실외 오디오 샘플로 top-class 확인 권장
@@ -30,11 +30,14 @@ class SoundDetector {
   final List<double> _bufR = [];
 
   Interpreter? _interpreter;
+  IsolateInterpreter? _isolateInterpreter;
   bool _isInferring = false;
+  bool _disposed    = false;
+  Future<void>? _activeInference;
   bool _isStereo    = false;
-  bool _shouldRun   = false;
+  bool _isRunning   = false;
+  int  _runEpoch    = 0; // probe 중 외부 start() 재호출로 스트림 소유권이 넘어갔는지 감지
   double _threshold = 0.15;
-  StreamSubscription<Uint8List>? _streamSub;
 
   // probe 중에만 설정되는 콜백 — 추론 결과를 외부로 전달
   void Function(List<double> scores)? _onScores;
@@ -47,19 +50,15 @@ class SoundDetector {
   Future<void> init() async {
     final modelData = await rootBundle.load('assets/models/yamnet.tflite');
     _interpreter = Interpreter.fromBuffer(modelData.buffer.asUint8List());
+    _isolateInterpreter =
+        await IsolateInterpreter.create(address: _interpreter!.address);
     debugPrint('✅ 모델 로드 완료');
   }
 
   Future<void> start() async {
     if (_interpreter == null) await init();
-    _shouldRun = true;
-    await _startStream();
-  }
-
-  Future<void> _startStream() async {
-    if (!_shouldRun) return;
-    _streamSub?.cancel();
-    _streamSub = null;
+    _isRunning = true;
+    _runEpoch++;
 
     Stream<Uint8List> stream;
     try {
@@ -104,22 +103,11 @@ class SoundDetector {
       _isStereo = false;
     }
     debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo)');
-    _streamSub = stream.listen(
-      _onAudioData,
-      onDone: () {
-        // TTS 등 오디오 포커스 변화로 스트림이 닫혔을 때 자동 재연결
-        if (_shouldRun) {
-          debugPrint('🔄 오디오 스트림 재연결 중...');
-          Future.delayed(const Duration(milliseconds: 300), _startStream);
-        }
-      },
-    );
+    stream.listen(_onAudioData);
   }
 
   Future<void> stop() async {
-    _shouldRun = false;
-    _streamSub?.cancel();
-    _streamSub = null;
+    _isRunning = false;
     await _recorder.stop();
     _bufL.clear();
     _bufR.clear();
@@ -127,6 +115,7 @@ class SoundDetector {
   }
 
   void _onAudioData(Uint8List bytes) {
+    if (_disposed) return;
     if (_isStereo) {
       for (int i = 0; i + 3 < bytes.length; i += 4) {
         int sL = bytes[i]     | (bytes[i + 1] << 8);
@@ -153,50 +142,58 @@ class SoundDetector {
     }
 
     while (_bufL.length >= _windowSize) {
+      // 추론이 이미 진행 중이면(비동기·isolate) 백로그를 버리고 최신 창을 우선한다.
       if (_isInferring) {
         _bufL.removeRange(0, _hopSize);
         _bufR.removeRange(0, _hopSize);
         continue;
       }
-      final winL = List<double>.unmodifiable(_bufL.sublist(0, _windowSize));
-      final winR = List<double>.unmodifiable(_bufR.sublist(0, _windowSize));
+      final winL = List<double>.of(_bufL.sublist(0, _windowSize));
+      final winR = List<double>.of(_bufR.sublist(0, _windowSize));
       _bufL.removeRange(0, _hopSize);
       _bufR.removeRange(0, _hopSize);
-      runInference(winL, winR);
+
+      // await 이전에 동기로 플래그를 세워야 가드가 실제로 동작한다.
+      _isInferring = true;
+      _activeInference = _runInference(winL, winR);
+      unawaited(_activeInference);
     }
   }
 
-  void runInference(List<double> winL, List<double> winR) {
-    if (_interpreter == null) {
+  Future<void> _runInference(List<double> winL, List<double> winR) async {
+    final isolate = _isolateInterpreter;
+    if (isolate == null) {
       debugPrint('❌ interpreter null — init() 호출 필요');
+      _isInferring = false;
       return;
     }
-    _isInferring = true;
     try {
       final mono = Float32List.fromList(
         List.generate(_windowSize, (i) => (winL[i] + winR[i]) * 0.5),
       );
       final output = [List.filled(521, 0.0)];
-      _interpreter!.run([mono], output);
+      await isolate.run([mono], output);
 
       final scores = output[0];
 
       _onScores?.call(scores); // probe 중에만 호출됨
 
-      final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
-        ..sort((a, b) => b.value.compareTo(a.value));
-      debugPrint('🔊 Top3: ${indexed.take(3).map((e) => '${e.key}=${e.value.toStringAsFixed(3)}').join(', ')}');
+      if (kDebugMode) {
+        final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
+          ..sort((a, b) => b.value.compareTo(a.value));
+        debugPrint('🔊 Top3: ${indexed.take(3).map((e) => '${e.key}=${e.value.toStringAsFixed(3)}').join(', ')}');
 
-      final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
-      final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
-      final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
-      debugPrint('🎯 horn=${hornScore.toStringAsFixed(3)} siren=${sirenScore.toStringAsFixed(3)} brake=${brakeScore.toStringAsFixed(3)} threshold=$_threshold');
+        final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
+        final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
+        final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
+        debugPrint('🎯 horn=${hornScore.toStringAsFixed(3)} siren=${sirenScore.toStringAsFixed(3)} brake=${brakeScore.toStringAsFixed(3)} threshold=$_threshold');
+      }
 
       final detected = classify(scores);
       if (detected == DetectedSound.none) return;
 
       final direction = TdoaAnalyzer.analyze(winL, winR);
-      _controller.add(DetectionEvent(detected, direction));
+      if (!_controller.isClosed) _controller.add(DetectionEvent(detected, direction));
     } catch (e, st) {
       debugPrint('❌ YAMNet 추론 오류: $e\n$st');
     } finally {
@@ -220,13 +217,11 @@ class SoundDetector {
   Future<bool> probeTrafficAmbient() async {
     if (_interpreter == null) await init();
 
-    final wasRunning = _shouldRun;
+    final wasRunning = _isRunning;
     bool detected    = false;
 
-    if (!wasRunning) {
-      _shouldRun = true;
-      await _startStream();
-    }
+    if (!wasRunning) await start();
+    final probeEpoch = _runEpoch;
 
     _onScores = (scores) {
       final maxAmbient = _trafficAmbientClasses.map((i) => scores[i]).reduce(max);
@@ -237,16 +232,22 @@ class SoundDetector {
     await Future.delayed(const Duration(seconds: 3));
     _onScores = null;
 
-    if (!wasRunning) await stop();
+    // 대기 중 외부에서 start()가 다시 호출돼 스트림 소유권이 넘어갔다면 정지하지 않음
+    if (!wasRunning && _runEpoch == probeEpoch) await stop();
 
     return detected;
   }
 
-  void dispose() {
-    _onScores = null;
-    _recorder.dispose();
+  Future<void> dispose() async {
+    _disposed = true;
+    await _recorder.dispose();
+    // isolate가 참조하는 네이티브 인터프리터를 닫기 전에 진행 중인 추론을 기다린다.
+    try {
+      await _activeInference;
+    } catch (_) {}
+    await _isolateInterpreter?.close();
     _interpreter?.close();
-    _controller.close();
-    _levelController.close();
+    await _controller.close();
+    await _levelController.close();
   }
 }
