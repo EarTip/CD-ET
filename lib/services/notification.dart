@@ -43,6 +43,9 @@ class NotificationService {
       case DetectedSound.brake:
         title = '🛑 급정거 감지';
         body = '주변에 급정거 소리가 감지되었습니다';
+      case DetectedSound.bicycle:
+        title = '🚲 자전거 벨 감지';
+        body = '주변에 자전거 벨 소리가 감지되었습니다';
       case DetectedSound.none:
         return;
     }

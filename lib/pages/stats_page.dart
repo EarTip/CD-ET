@@ -310,6 +310,7 @@ class _StatsPageState extends State<StatsPage> {
         DetectedSound.horn => Icons.car_crash_outlined,
         DetectedSound.siren => Icons.emergency_outlined,
         DetectedSound.brake => Icons.directions_car_outlined,
+        DetectedSound.bicycle => Icons.pedal_bike,
         DetectedSound.none => Icons.volume_off_outlined,
       };
 }

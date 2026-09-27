@@ -11,6 +11,7 @@ export 'tdoa_analyzer.dart' show DetectedSound, SoundDirection, SoundDirectionIn
 const _hornClasses  = [27, 302, 382, 390, 394];
 const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
 const _brakeClasses = [308];
+const _bicycleClasses = [198]; // Bicycle bell
 
 class SoundDetector {
   final AudioRecorder _recorder = AudioRecorder();
@@ -171,7 +172,8 @@ class SoundDetector {
         final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
         final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
         final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
-        debugPrint('🎯 horn=${hornScore.toStringAsFixed(3)} siren=${sirenScore.toStringAsFixed(3)} brake=${brakeScore.toStringAsFixed(3)} threshold=$_threshold');
+        final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
+        debugPrint('🎯 horn=${hornScore.toStringAsFixed(3)} siren=${sirenScore.toStringAsFixed(3)} brake=${brakeScore.toStringAsFixed(3)} bicycle=${bicycleScore.toStringAsFixed(3)} threshold=$_threshold');
       }
 
       final detected = classify(scores);
@@ -190,9 +192,11 @@ class SoundDetector {
     final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
     final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
     final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
+    final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
 
-    if (sirenScore > _threshold && sirenScore >= hornScore && sirenScore >= brakeScore) return DetectedSound.siren;
-    if (hornScore  > _threshold && hornScore  >= sirenScore && hornScore  >= brakeScore) return DetectedSound.horn;
+    if (sirenScore > _threshold && sirenScore >= hornScore && sirenScore >= brakeScore && sirenScore >= bicycleScore) return DetectedSound.siren;
+    if (hornScore  > _threshold && hornScore  >= sirenScore && hornScore  >= brakeScore && hornScore  >= bicycleScore) return DetectedSound.horn;
+    if (bicycleScore > _threshold && bicycleScore >= brakeScore) return DetectedSound.bicycle;
     if (brakeScore > _threshold) return DetectedSound.brake;
     return DetectedSound.none;
   }

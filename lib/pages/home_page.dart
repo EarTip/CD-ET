@@ -24,6 +24,8 @@ class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   bool _isListening = false;
   bool _isInitialized = false;
+  /// start/stopMonitoring 완료 전 재클릭으로 중복 실행되는 것을 막는 가드
+  bool _isToggling = false;
   MotionState _motionState = MotionState.unknown;
   SensitivityLevel _sensitivityLevel = SensitivityLevel.normal;
   bool _earphoneConnected = false;
@@ -91,42 +93,48 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _toggleListening() async {
     print('🔘 _toggleListening 호출됨, 현재 isListening=$_isListening');
-    if (_isListening) {
-      await _manager.stopMonitoring();
-      _manager.onDetected = null;
-      setState(() {
-        _motionState = MotionState.unknown;
-        _sensitivityLevel = SensitivityLevel.normal;
-      });
-    } else {
-      _manager.onDetected = (event) async {
-        try {
-          await LogRepository.instance.insert(
-            DetectionLog(
-              sound: event.sound,
-              direction: event.direction,
-              time: DateTime.now(),
-            ),
-          );
-        } catch (e) {
-          debugPrint('감지 기록을 저장하지 못했습니다: $e');
-        }
-
-        if (!mounted) return;
-
+    if (_isToggling) return;
+    _isToggling = true;
+    try {
+      if (_isListening) {
+        await _manager.stopMonitoring();
+        _manager.onDetected = null;
         setState(() {
-          _recentLogs.insert(0, {
-            'sound': event.sound,
-            'direction': event.direction,
-            'time': DateTime.now(),
-          });
-          if (_recentLogs.length > 20) _recentLogs.removeLast();
+          _motionState = MotionState.unknown;
+          _sensitivityLevel = SensitivityLevel.normal;
         });
-      };
-      await _manager.startMonitoring();
-      _earphoneConnected = _manager.earphoneConnected;
+      } else {
+        _manager.onDetected = (event) async {
+          try {
+            await LogRepository.instance.insert(
+              DetectionLog(
+                sound: event.sound,
+                direction: event.direction,
+                time: DateTime.now(),
+              ),
+            );
+          } catch (e) {
+            debugPrint('감지 기록을 저장하지 못했습니다: $e');
+          }
+
+          if (!mounted) return;
+
+          setState(() {
+            _recentLogs.insert(0, {
+              'sound': event.sound,
+              'direction': event.direction,
+              'time': DateTime.now(),
+            });
+            if (_recentLogs.length > 20) _recentLogs.removeLast();
+          });
+        };
+        await _manager.startMonitoring();
+        _earphoneConnected = _manager.earphoneConnected;
+      }
+      setState(() => _isListening = !_isListening);
+    } finally {
+      _isToggling = false;
     }
-    setState(() => _isListening = !_isListening);
   }
 
   @override
