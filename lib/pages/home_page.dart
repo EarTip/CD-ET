@@ -112,6 +112,8 @@ class _HomePageState extends State<HomePage> {
           debugPrint('감지 기록을 저장하지 못했습니다: $e');
         }
 
+        if (!mounted) return;
+
         setState(() {
           _recentLogs.insert(0, {
             'sound': event.sound,
