@@ -144,7 +144,11 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF2F5FA),
       body: SafeArea(
-        child: _currentIndex == 0 ? _buildHomeTab() : const StatsPage(),
+        child: switch (_currentIndex) {
+          0 => _buildHomeTab(),
+          1 => const StatsPage(),
+          _ => const SettingsPage(),
+        },
       ),
       bottomNavigationBar: buildBottomNav(),
     );
@@ -389,9 +393,9 @@ class _HomePageState extends State<HomePage> {
             label: '통계',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: '프로필',
+            icon: Icon(Icons.settings_outlined),
+            activeIcon: Icon(Icons.settings),
+            label: '설정',
           ),
         ],
       ),
