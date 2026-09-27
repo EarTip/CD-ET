@@ -85,6 +85,14 @@ class SoundDetector {
     _startCount--;
     if (_startCount > 0) return;
 
+    // 아직 시작(_beginStream) 작업이 진행 중이면 여기서 정지하지 않음 —
+    // 시작이 끝난 뒤 _beginStream()이 카운트를 다시 확인해서 직접 정리한다.
+    if (_startingFuture != null) return;
+
+    await _stopStream();
+  }
+
+  Future<void> _stopStream() async {
     _isRunning = false;
     await _recorder.stop();
     _bufL.clear();
@@ -140,6 +148,11 @@ class SoundDetector {
     debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo)');
     stream.listen(_onAudioData);
     _isRunning = true;
+
+    // 시작 작업 도중 참조가 전부 사라졌다면(대기 중 stop() 호출) 바로 정리
+    if (_startCount == 0) {
+      await _stopStream();
+    }
   }
 
   void _onAudioData(Uint8List bytes) {
