@@ -6,6 +6,10 @@ import '../widgets/recent_list.dart';
 import '../services/sound_manager.dart';
 import '../services/activity_service.dart';
 import '../services/geofence_service.dart';
+import '../models/detection_log.dart';
+import '../services/log_repository.dart';
+import '../services/tdoa_analyzer.dart';
+import 'stats_page.dart';
 import '../services/settings_service.dart';
 import 'settings_page.dart';
 
@@ -35,6 +39,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _initAsync();
+    _loadRecentLogs();
     _motionSubscription = _manager.motionStream.listen(
       (state) => setState(() => _motionState = state),
     );
@@ -58,9 +63,30 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => _isInitialized = true);
   }
 
+  Future<void> _loadRecentLogs() async {
+    try {
+      final logs = await LogRepository.instance.recent();
+      if (mounted) {
+        setState(() {
+          _recentLogs.clear();
+          _recentLogs.addAll(
+            logs.map(
+              (l) => {
+                'sound': l.sound,
+                'direction': l.direction ?? SoundDirection.unknown,
+                'time': l.time,
+              },
+            ),
+          );
+        });
+      }
+    } catch (e) {
+      debugPrint('최근 감지 기록을 불러오지 못했습니다: $e');
+    }
+  }
+
   Future<void> _onRefresh() async {
-    await Future.delayed(const Duration(milliseconds: 800));
-    setState(() {});
+    await _loadRecentLogs();
   }
 
   Future<void> _toggleListening() async {
@@ -73,12 +99,26 @@ class _HomePageState extends State<HomePage> {
         _sensitivityLevel = SensitivityLevel.normal;
       });
     } else {
-      _manager.onDetected = (event) {
+      _manager.onDetected = (event) async {
+        try {
+          await LogRepository.instance.insert(
+            DetectionLog(
+              sound: event.sound,
+              direction: event.direction,
+              time: DateTime.now(),
+            ),
+          );
+        } catch (e) {
+          debugPrint('감지 기록을 저장하지 못했습니다: $e');
+        }
+
+        if (!mounted) return;
+
         setState(() {
           _recentLogs.insert(0, {
-            'sound':     event.sound,
+            'sound': event.sound,
             'direction': event.direction,
-            'time':      DateTime.now(),
+            'time': DateTime.now(),
           });
           if (_recentLogs.length > 20) _recentLogs.removeLast();
         });
@@ -104,9 +144,11 @@ class _HomePageState extends State<HomePage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF2F5FA),
       body: SafeArea(
-        // 설정 탭은 자체 Scaffold를 가지므로 탭 인덱스에 따라 body만 교체한다.
-        // 통계 탭은 아직 구현 전이라 홈 화면을 그대로 보여준다.
-        child: _currentIndex == 2 ? const SettingsPage() : _buildHomeTab(),
+        child: switch (_currentIndex) {
+          0 => _buildHomeTab(),
+          1 => const StatsPage(),
+          _ => const SettingsPage(),
+        },
       ),
       bottomNavigationBar: buildBottomNav(),
     );
@@ -173,9 +215,12 @@ class _HomePageState extends State<HomePage> {
 
   Widget buildSensitivityBadge() {
     final (icon, color) = switch (_sensitivityLevel) {
-      SensitivityLevel.high     => (Icons.warning_amber_rounded, const Color(0xFFFF3B30)),
+      SensitivityLevel.high => (
+        Icons.warning_amber_rounded,
+        const Color(0xFFFF3B30),
+      ),
       SensitivityLevel.elevated => (Icons.cell_tower, const Color(0xFFFF9500)),
-      SensitivityLevel.normal   => (Icons.graphic_eq, const Color(0xFF8A8FA8)),
+      SensitivityLevel.normal => (Icons.graphic_eq, const Color(0xFF8A8FA8)),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -191,7 +236,11 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(width: 8),
           Text(
             _sensitivityLevel.label,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -220,9 +269,21 @@ class _HomePageState extends State<HomePage> {
 
   Widget buildMotionBadge() {
     final (icon, label, color) = switch (_motionState) {
-      MotionState.moving  => (Icons.directions_walk, '이동 중 · 마이크 활성', const Color(0xFF34C759)),
-      MotionState.still   => (Icons.pause_circle_outline, '정지 · 마이크 대기', const Color(0xFFFF9500)),
-      MotionState.unknown => (Icons.sensors, '활동 감지 중...', const Color(0xFF8A8FA8)),
+      MotionState.moving => (
+        Icons.directions_walk,
+        '이동 중 · 마이크 활성',
+        const Color(0xFF34C759),
+      ),
+      MotionState.still => (
+        Icons.pause_circle_outline,
+        '정지 · 마이크 대기',
+        const Color(0xFFFF9500),
+      ),
+      MotionState.unknown => (
+        Icons.sensors,
+        '활동 감지 중...',
+        const Color(0xFF8A8FA8),
+      ),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -236,7 +297,14 @@ class _HomePageState extends State<HomePage> {
         children: [
           Icon(icon, size: 16, color: color),
           const SizedBox(width: 8),
-          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -282,12 +350,22 @@ class _HomePageState extends State<HomePage> {
         elevation: 0,
         selectedItemColor: const Color(0xFF5B9CF6),
         unselectedItemColor: const Color(0xFFB0B8CC),
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11),
+        selectedLabelStyle: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontSize: 11,
+        ),
         unselectedLabelStyle: const TextStyle(fontSize: 11),
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home_outlined), activeIcon: Icon(Icons.home), label: '홈'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart_outlined), activeIcon: Icon(Icons.bar_chart), label: '통계'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings_outlined), activeIcon: Icon(Icons.settings), label: '설정'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bar_chart_outlined),
+            activeIcon: Icon(Icons.bar_chart),
+            label: '통계',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings_outlined),
+            activeIcon: Icon(Icons.settings),
+            label: '설정',
+          ),
         ],
       ),
     );
