@@ -311,47 +311,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildHeader() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'EarTips',
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF1A1A2E),
-              ),
-            ),
-            SizedBox(height: 2),
-            Text(
-              '주변 소리를 감지하고 있어요',
-              style: TextStyle(fontSize: 13, color: Color(0xFF8A8FA8)),
-            ),
-          ],
+        Text(
+          'EarTips',
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF1A1A2E),
+          ),
         ),
-        GestureDetector(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsPage()),
-          ),
-          child: Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 10,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: const Icon(Icons.settings_outlined, color: Color(0xFF5B9CF6), size: 22),
-          ),
+        SizedBox(height: 2),
+        Text(
+          '주변 소리를 감지하고 있어요',
+          style: TextStyle(fontSize: 13, color: Color(0xFF8A8FA8)),
         ),
       ],
     );
@@ -382,11 +356,6 @@ class _HomePageState extends State<HomePage> {
         ),
         unselectedLabelStyle: const TextStyle(fontSize: 11),
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home),
-            label: '홈',
-          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart_outlined),
             activeIcon: Icon(Icons.bar_chart),
