@@ -14,6 +14,7 @@ class SettingsPage extends StatelessWidget {
         DetectedSound.horn  => Icons.car_crash_outlined,
         DetectedSound.siren => Icons.emergency_outlined,
         DetectedSound.brake => Icons.directions_car_outlined,
+        DetectedSound.bicycle => Icons.pedal_bike,
         DetectedSound.none  => Icons.help_outline,
       };
 

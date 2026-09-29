@@ -10,7 +10,7 @@ class HapticService {
       DetectedSound.siren => 'siren',
       DetectedSound.horn  => 'horn',
       DetectedSound.brake => 'brake',
-      // DetectedSound.name  => 'name',   -- 아직 sound_detector.dart에 name 구현 안 함
+      DetectedSound.bicycle => 'horn', // 전용 네이티브 패턴이 없어 경적 패턴 재사용
       DetectedSound.none  => null,
     };
 

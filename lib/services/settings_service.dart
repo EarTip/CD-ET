@@ -24,6 +24,7 @@ extension DetectedSoundInfo on DetectedSound {
         DetectedSound.horn  => '경적',
         DetectedSound.siren => '사이렌',
         DetectedSound.brake => '급브레이크',
+        DetectedSound.bicycle => '자전거 벨',
         DetectedSound.none  => '없음',
       };
 }
@@ -40,6 +41,7 @@ class SettingsService extends ChangeNotifier {
   static const detectableSounds = [
     DetectedSound.horn,
     DetectedSound.siren,
+    DetectedSound.bicycle,
     DetectedSound.brake,
   ];
 

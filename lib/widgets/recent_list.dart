@@ -109,6 +109,7 @@ class RecentList extends StatelessWidget {
         DetectedSound.horn  => _SoundInfo(Icons.car_crash_outlined,     '경적 감지됨',    const Color(0xFFFF6B6B)),
         DetectedSound.siren => _SoundInfo(Icons.emergency_outlined,     '사이렌 감지됨',  const Color(0xFFFFB347)),
         DetectedSound.brake => _SoundInfo(Icons.directions_car_outlined,'급브레이크 감지됨', const Color(0xFFFF9F43)),
+        DetectedSound.bicycle => _SoundInfo(Icons.pedal_bike,          '자전거 벨 감지됨', const Color(0xFF4ECDC4)),
         DetectedSound.none  => _SoundInfo(Icons.volume_off_outlined,    '알 수 없음',    const Color(0xFFB0B8CC)),
       };
 
