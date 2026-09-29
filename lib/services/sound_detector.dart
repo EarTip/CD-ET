@@ -194,8 +194,8 @@ class SoundDetector {
     final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
     final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
 
-    if (sirenScore > _threshold && sirenScore >= hornScore && sirenScore >= brakeScore && sirenScore >= bicycleScore) return DetectedSound.siren;
-    if (hornScore  > _threshold && hornScore  >= sirenScore && hornScore  >= brakeScore && hornScore  >= bicycleScore) return DetectedSound.horn;
+    if (sirenScore > _threshold && sirenScore >= hornScore) return DetectedSound.siren;
+    if (hornScore  > _threshold && hornScore  >= sirenScore) return DetectedSound.horn;
     if (bicycleScore > _threshold && bicycleScore >= brakeScore) return DetectedSound.bicycle;
     if (brakeScore > _threshold) return DetectedSound.brake;
     return DetectedSound.none;
