@@ -76,6 +76,8 @@ class TtsService {
         await speak('사이렌이 감지되었습니다');
       case DetectedSound.brake:
         await speak('급정거가 감지되었습니다');
+      case DetectedSound.bicycle:
+        await speak('자전거 벨이 감지되었습니다');
       case DetectedSound.none:
         break;
     }

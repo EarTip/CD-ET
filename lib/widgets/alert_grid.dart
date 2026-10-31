@@ -25,7 +25,7 @@ class AlertGrid extends StatelessWidget {
         final items = [
           {'icon': Icons.car_crash_outlined, 'label': '경적', 'enabled': settings.isSoundEnabled(DetectedSound.horn)},
           {'icon': Icons.emergency_outlined, 'label': '사이렌', 'enabled': settings.isSoundEnabled(DetectedSound.siren)},
-          {'icon': Icons.record_voice_over_outlined, 'label': '내 이름', 'enabled': false},
+          {'icon': Icons.pedal_bike, 'label': '자전거 벨', 'enabled': settings.isSoundEnabled(DetectedSound.bicycle)},
           {'icon': Icons.directions_car_outlined, 'label': '급브레이크', 'enabled': settings.isSoundEnabled(DetectedSound.brake)},
         ];
 

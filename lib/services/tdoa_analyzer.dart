@@ -4,7 +4,7 @@ import 'dart:math';
 // 공통 도메인 모델
 // ──────────────────────────────────────────────
 
-enum DetectedSound { horn, siren, brake, none }
+enum DetectedSound { horn, siren, brake, bicycle, none }
 
 enum SoundDirection { front, behind, side, unknown }
 
