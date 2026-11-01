@@ -61,22 +61,29 @@ class SoundDetector {
   /// 이미 시작 작업이 진행 중이면 그 작업을 공유해서 중복 startStream() 방지.
   Future<void> start() async {
     _startCount++;
-    if (_startingFuture != null) {
-      await _startingFuture;
-      return;
-    }
-    if (_isRunning) return;
 
-    final future = _beginStream();
-    _startingFuture = future;
-    try {
-      await future;
-    } catch (e) {
-      // 시작 실패 시 이 시작 시도에 걸린 참조는 무효 — 다음 재시도를 허용
-      _startCount = 0;
-      rethrow;
-    } finally {
-      _startingFuture = null;
+    // 공유한 시작 작업이 끝나도 스트림이 실제로 떠 있다는 보장은 없다.
+    // (_beginStream()이 참조 없음을 확인하고 _stopStream()을 기다리는 사이 들어온 start()는
+    // 그 정리 작업을 공유하게 되어 스트림 없이 반환될 수 있음)
+    // 그래서 완료 후 참조가 남아 있는데 실행 중이 아니면 다시 시작한다.
+    while (_startCount > 0 && !_isRunning) {
+      final pending = _startingFuture;
+      if (pending != null) {
+        await pending;
+        continue;
+      }
+
+      final future = _beginStream();
+      _startingFuture = future;
+      try {
+        await future;
+      } catch (e) {
+        // 시작 실패 시 이 시작 시도에 걸린 참조는 무효 — 다음 재시도를 허용
+        _startCount = 0;
+        rethrow;
+      } finally {
+        _startingFuture = null;
+      }
     }
   }
 
@@ -203,6 +210,8 @@ class SoundDetector {
   }
 
   Future<void> _runInference(List<double> winL, List<double> winR) async {
+    // dispatch 시점의 probe 콜백 — 이후에 시작된 probe로 이전 구간의 결과가 새지 않게 한다.
+    final onScores = _onScores;
     final isolate = _isolateInterpreter;
     if (isolate == null) {
       debugPrint('❌ interpreter null — init() 호출 필요');
@@ -218,7 +227,8 @@ class SoundDetector {
 
       final scores = output[0];
 
-      _onScores?.call(scores); // probe 중에만 호출됨
+      // dispatch 시점의 probe가 아직 활성일 때만 전달
+      if (identical(onScores, _onScores)) onScores?.call(scores);
 
       if (kDebugMode) {
         final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
@@ -268,14 +278,19 @@ class SoundDetector {
     // 대기 중 외부에서 start()가 걸려도 stop()에서 카운트가 남아있으면 실제로는 안 꺼짐
     await start();
 
-    _onScores = (scores) {
+    void onScores(List<double> scores) {
       final maxAmbient = _trafficAmbientClasses.map((i) => scores[i]).reduce(max);
       debugPrint('🎙️ ambient max=${maxAmbient.toStringAsFixed(3)} threshold=$_ambientThreshold');
       if (maxAmbient > _ambientThreshold) detected = true;
-    };
+    }
+    _onScores = onScores;
 
     await Future.delayed(const Duration(seconds: 3));
-    _onScores = null;
+    // 마지막 창의 추론이 진행 중일 수 있으므로, 점수가 콜백에 반영된 뒤에 해제한다.
+    // (_runInference는 예외를 모두 잡으므로 던지지 않고, 대기 시간은 추론 한 번으로 제한됨)
+    await _activeInference;
+    // 다른 probe가 콜백을 등록했다면 그 콜백을 지우지 않는다
+    if (identical(_onScores, onScores)) _onScores = null;
 
     await stop();
 
