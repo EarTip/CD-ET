@@ -13,6 +13,11 @@ const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
 const _brakeClasses = [308];
 const _bicycleClasses = [198]; // Bicycle bell
 
+// 실내/외 판단용 ambient 교통음 클래스 (실외 배경 소음)
+// 실제 모델에서 검증 필요 — 실외 오디오 샘플로 top-class 확인 권장
+const _trafficAmbientClasses = [300, 301, 304, 305, 308]; // Vehicle, Car, Engine, Motor vehicle, Truck
+const _ambientThreshold      = 0.08; // 배경음이라 전경음보다 낮은 임계값
+
 class SoundDetector {
   final AudioRecorder _recorder = AudioRecorder();
   final _controller      = StreamController<DetectionEvent>.broadcast();
@@ -31,7 +36,13 @@ class SoundDetector {
   bool _disposed    = false;
   Future<void>? _activeInference;
   bool _isStereo    = false;
+  bool _isRunning   = false;
+  int  _startCount  = 0; // 참조 카운트 — 여러 호출자가 동시에 필요로 할 수 있음
+  Future<void>? _startingFuture; // 시작 작업 직렬화 (동시 start() 호출 시 같은 작업 공유)
   double _threshold = 0.15;
+
+  // probe 중에만 설정되는 콜백 — 추론 결과를 외부로 전달
+  void Function(List<double> scores)? _onScores;
 
   Stream<DetectionEvent> get detectionStream => _controller.stream;
   Stream<double> get audioLevelStream => _levelController.stream;
@@ -46,7 +57,58 @@ class SoundDetector {
     debugPrint('✅ 모델 로드 완료');
   }
 
+  /// 참조 카운트 기반 시작 — 여러 호출자(mic/probe)가 동시에 필요로 해도 안전.
+  /// 이미 시작 작업이 진행 중이면 그 작업을 공유해서 중복 startStream() 방지.
   Future<void> start() async {
+    _startCount++;
+
+    // 공유한 시작 작업이 끝나도 스트림이 실제로 떠 있다는 보장은 없다.
+    // (_beginStream()이 참조 없음을 확인하고 _stopStream()을 기다리는 사이 들어온 start()는
+    // 그 정리 작업을 공유하게 되어 스트림 없이 반환될 수 있음)
+    // 그래서 완료 후 참조가 남아 있는데 실행 중이 아니면 다시 시작한다.
+    while (_startCount > 0 && !_isRunning) {
+      final pending = _startingFuture;
+      if (pending != null) {
+        await pending;
+        continue;
+      }
+
+      final future = _beginStream();
+      _startingFuture = future;
+      try {
+        await future;
+      } catch (e) {
+        // 시작 실패 시 이 시작 시도에 걸린 참조는 무효 — 다음 재시도를 허용
+        _startCount = 0;
+        rethrow;
+      } finally {
+        _startingFuture = null;
+      }
+    }
+  }
+
+  /// 참조 카운트가 0이 될 때만 실제로 정지 — 다른 호출자가 아직 필요로 하면 유지
+  Future<void> stop() async {
+    if (_startCount == 0) return;
+    _startCount--;
+    if (_startCount > 0) return;
+
+    // 아직 시작(_beginStream) 작업이 진행 중이면 여기서 정지하지 않음 —
+    // 시작이 끝난 뒤 _beginStream()이 카운트를 다시 확인해서 직접 정리한다.
+    if (_startingFuture != null) return;
+
+    await _stopStream();
+  }
+
+  Future<void> _stopStream() async {
+    _isRunning = false;
+    await _recorder.stop();
+    _bufL.clear();
+    _bufR.clear();
+    if (!_levelController.isClosed) _levelController.add(0.0);
+  }
+
+  Future<void> _beginStream() async {
     if (_interpreter == null) await init();
 
     Stream<Uint8List> stream;
@@ -93,13 +155,12 @@ class SoundDetector {
     }
     debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo)');
     stream.listen(_onAudioData);
-  }
+    _isRunning = true;
 
-  Future<void> stop() async {
-    await _recorder.stop();
-    _bufL.clear();
-    _bufR.clear();
-    if (!_levelController.isClosed) _levelController.add(0.0);
+    // 시작 작업 도중 참조가 전부 사라졌다면(대기 중 stop() 호출) 바로 정리
+    if (_startCount == 0) {
+      await _stopStream();
+    }
   }
 
   void _onAudioData(Uint8List bytes) {
@@ -149,6 +210,8 @@ class SoundDetector {
   }
 
   Future<void> _runInference(List<double> winL, List<double> winR) async {
+    // dispatch 시점의 probe 콜백 — 이후에 시작된 probe로 이전 구간의 결과가 새지 않게 한다.
+    final onScores = _onScores;
     final isolate = _isolateInterpreter;
     if (isolate == null) {
       debugPrint('❌ interpreter null — init() 호출 필요');
@@ -163,6 +226,9 @@ class SoundDetector {
       await isolate.run([mono], output);
 
       final scores = output[0];
+
+      // dispatch 시점의 probe가 아직 활성일 때만 전달
+      if (identical(onScores, _onScores)) onScores?.call(scores);
 
       if (kDebugMode) {
         final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
@@ -199,6 +265,36 @@ class SoundDetector {
     if (bicycleScore > _threshold && bicycleScore >= brakeScore) return DetectedSound.bicycle;
     if (brakeScore > _threshold) return DetectedSound.brake;
     return DetectedSound.none;
+  }
+
+  /// IndoorOutdoorService에서 주입받아 실내/외 판단에 사용
+  /// 3초간 마이크를 켜서 교통 ambient 클래스가 감지되면 true 반환
+  Future<bool> probeTrafficAmbient() async {
+    if (_interpreter == null) await init();
+
+    bool detected = false;
+
+    // 참조 카운트로 시작 — 이미 다른 곳(mic)에서 켜둔 상태면 카운트만 증가하고 유지,
+    // 대기 중 외부에서 start()가 걸려도 stop()에서 카운트가 남아있으면 실제로는 안 꺼짐
+    await start();
+
+    void onScores(List<double> scores) {
+      final maxAmbient = _trafficAmbientClasses.map((i) => scores[i]).reduce(max);
+      debugPrint('🎙️ ambient max=${maxAmbient.toStringAsFixed(3)} threshold=$_ambientThreshold');
+      if (maxAmbient > _ambientThreshold) detected = true;
+    }
+    _onScores = onScores;
+
+    await Future.delayed(const Duration(seconds: 3));
+    // 마지막 창의 추론이 진행 중일 수 있으므로, 점수가 콜백에 반영된 뒤에 해제한다.
+    // (_runInference는 예외를 모두 잡으므로 던지지 않고, 대기 시간은 추론 한 번으로 제한됨)
+    await _activeInference;
+    // 다른 probe가 콜백을 등록했다면 그 콜백을 지우지 않는다
+    if (identical(_onScores, onScores)) _onScores = null;
+
+    await stop();
+
+    return detected;
   }
 
   Future<void> dispose() async {

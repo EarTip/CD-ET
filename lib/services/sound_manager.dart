@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'sound_detector.dart';
 import 'activity_service.dart';
 import 'geofence_service.dart';
+import 'indoor_outdoor_service.dart';
 import 'notification.dart';
 import 'tts.dart';
 import 'haptic.dart';
@@ -19,6 +20,8 @@ class SoundManager {
   final EarphoneService _earphone = EarphoneService();
   final SettingsService _settings = SettingsService.instance;
 
+  late final IndoorOutdoorService _indoorOutdoor;
+
   final Map<DetectedSound, DateTime> _lastDetectedAt = {};
   static const _cooldown = Duration(seconds: 3);
 
@@ -26,10 +29,12 @@ class SoundManager {
   StreamSubscription<MotionState>? _motionSubscription;
   StreamSubscription<SensitivityLevel>? _sensitivitySubscription;
   StreamSubscription<bool>? _earphoneSubscription;
+  StreamSubscription<IndoorOutdoorState>? _indoorOutdoorSubscription;
 
   bool _userEnabled = false;
   bool _micActive = false;
   bool _isStill = false;
+  MotionState _lastMotion = MotionState.unknown;
 
   void Function(DetectionEvent)? onDetected;
 
@@ -37,12 +42,18 @@ class SoundManager {
   Stream<MotionState> get motionStream => _activity.motionStream;
   Stream<SensitivityLevel> get sensitivityStream => _geofence.sensitivityStream;
   Stream<bool> get earphoneStream => _earphone.connectionStream;
+  Stream<IndoorOutdoorState> get indoorOutdoorStream => _indoorOutdoor.stateStream;
 
   MotionState get motionState => _activity.currentState;
   SensitivityLevel get sensitivityLevel => _geofence.currentLevel;
   bool get earphoneConnected => _earphone.isConnected;
+  IndoorOutdoorState get indoorOutdoorState => _indoorOutdoor.state;
+  bool get isOutdoor => _indoorOutdoor.isOutdoor;
 
   Future<void> init() async {
+    _indoorOutdoor = IndoorOutdoorService(
+      ambientProbe: _detector.probeTrafficAmbient,
+    );
     await _settings.load();
     await _detector.init();
     await _notification.init();
@@ -53,6 +64,7 @@ class SoundManager {
   Future<void> startMonitoring() async {
     _userEnabled = true;
     _isStill = false;
+    _lastMotion = MotionState.unknown;
 
     await _earphone.start();
     _earphoneSubscription = _earphone.connectionStream.listen((_) => _syncMic());
@@ -61,9 +73,20 @@ class SoundManager {
 
     await _activity.start();
     _motionSubscription = _activity.motionStream.listen((state) {
+      final wasMoving = _lastMotion == MotionState.moving;
+      _lastMotion = state;
       _isStill = state == MotionState.still;
+
+      // still/unknown → moving 전환 시에만 check() 호출
+      if (state == MotionState.moving && !wasMoving) {
+        _indoorOutdoor.check();
+      }
+      _indoorOutdoor.setStationary(_isStill);
+
       _syncMic();
     });
+
+    _indoorOutdoorSubscription = _indoorOutdoor.stateStream.listen((_) => _syncMic());
 
     await _geofence.start();
     _sensitivitySubscription = _geofence.sensitivityStream.listen((level) {
@@ -87,6 +110,10 @@ class SoundManager {
     _earphoneSubscription = null;
     _earphone.stop();
 
+    _indoorOutdoorSubscription?.cancel();
+    _indoorOutdoorSubscription = null;
+    _indoorOutdoor.reset();
+
     _stopMic();
     _detector.setThreshold(SensitivityLevel.high.threshold);
 
@@ -99,9 +126,10 @@ class SoundManager {
     return DateTime.now().difference(last) > _cooldown;
   }
 
-  /// 마이크가 켜져 있어야 하는 조건: 사용자 on · 이동 중 · (이어폰 전용이면) 이어폰 연결
+  /// 마이크가 켜져 있어야 하는 조건: 사용자 on · 이동 중 · 실외 · (이어폰 전용이면) 이어폰 연결
   bool get _shouldListen {
     if (!_userEnabled || _isStill) return false;
+    if (!_indoorOutdoor.isOutdoor) return false;
     if (_settings.earphoneOnly && !_earphone.isConnected) return false;
     return true;
   }
@@ -114,10 +142,20 @@ class SoundManager {
     }
   }
 
-  void _startMic() {
+  Future<void> _startMic() async {
     if (_micActive || !_userEnabled) return;
     _micActive = true;
-    _detector.start();
+    try {
+      await _detector.start();
+    } catch (e) {
+      debugPrint('❌ 마이크 시작 실패: $e');
+      _micActive = false;
+      return;
+    }
+    if (!_micActive) {
+      await _detector.stop();
+      return;
+    }
 
     _soundSubscription = _detector.detectionStream.listen((event) async {
       if (event.sound == DetectedSound.none) return;
@@ -174,6 +212,7 @@ class SoundManager {
     stopMonitoring();
     _settings.removeListener(_syncMic);
     _earphone.dispose();
+    _indoorOutdoor.dispose();
     await _detector.dispose();
     _activity.dispose();
     _geofence.dispose();
