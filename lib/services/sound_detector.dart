@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
+import 'pose_tracker.dart';
 import 'tdoa_analyzer.dart';
 
 export 'tdoa_analyzer.dart' show DetectedSound, SoundDirection, SoundDirectionInfo, DetectionEvent;
@@ -26,6 +27,16 @@ class SoundDetector {
   static const int _sampleRate = 16000;
   static const int _windowSize = 15600;
   static const int _hopSize    = _sampleRate ~/ 4;
+
+  /// Android 녹음 소스 시도 순서. unprocessed(기기 내부 처리 없음)가 방향 추정에는 유리하지만
+  /// AGC가 없어 YAMNet 점수 분포가 바뀌고, 감지 임계값(0.04~0.08)과 실내/외 probe 임계값은
+  /// mic 기준으로 맞춰져 있다. 실측으로 영향을 확인하기 전까지는 mic만 쓴다.
+  static const _androidSources = [AndroidAudioSource.mic];
+
+  /// 방향 테스트용: 마지막 감지(경적·사이렌 등)의 방향 판단 근거. 개발자 옵션에 표시된다.
+  static final lastDirectionDebug = ValueNotifier<String?>(null);
+
+  final PoseTracker _pose = PoseTracker();
 
   final List<double> _bufL = [];
   final List<double> _bufR = [];
@@ -102,6 +113,7 @@ class SoundDetector {
 
   Future<void> _stopStream() async {
     _isRunning = false;
+    _pose.stop();
     await _recorder.stop();
     _bufL.clear();
     _bufR.clear();
@@ -111,56 +123,54 @@ class SoundDetector {
   Future<void> _beginStream() async {
     if (_interpreter == null) await init();
 
-    Stream<Uint8List> stream;
-    try {
-      stream = await _recorder.startStream(RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: _sampleRate,
-        numChannels: 2,
-        iosConfig: const IosRecordConfig(
-          categoryOptions: [
-            IosAudioCategoryOption.mixWithOthers,
-            IosAudioCategoryOption.duckOthers,
-            IosAudioCategoryOption.allowBluetoothA2DP,
-          ],
-        ),
-        androidConfig: const AndroidRecordConfig(
-          audioSource: AndroidAudioSource.mic,
-          muteAudio: false,
-          manageBluetooth: false,
-          audioManagerMode: AudioManagerMode.modeNormal,
-        ),
-      ));
-      _isStereo = true;
-    } catch (_) {
-      stream = await _recorder.startStream(RecordConfig(
-        encoder: AudioEncoder.pcm16bits,
-        sampleRate: _sampleRate,
-        numChannels: 1,
-        iosConfig: const IosRecordConfig(
-          categoryOptions: [
-            IosAudioCategoryOption.mixWithOthers,
-            IosAudioCategoryOption.duckOthers,
-            IosAudioCategoryOption.allowBluetoothA2DP,
-          ],
-        ),
-        androidConfig: const AndroidRecordConfig(
-          audioSource: AndroidAudioSource.mic,
-          muteAudio: false,
-          manageBluetooth: false,
-          audioManagerMode: AudioManagerMode.modeNormal,
-        ),
-      ));
+    // 스테레오를 소스 순서대로 시도하고, 전부 실패하면 모노(mic)로 연다.
+    Stream<Uint8List>? stream;
+    AndroidAudioSource source = AndroidAudioSource.mic;
+    for (final s in _androidSources) {
+      try {
+        stream = await _recorder.startStream(_recordConfig(numChannels: 2, source: s));
+        source = s;
+        _isStereo = true;
+        break;
+      } catch (e) {
+        debugPrint('⚠️ 스테레오 녹음 실패 (source=${s.name}): $e');
+      }
+    }
+    if (stream == null) {
+      stream = await _recorder.startStream(_recordConfig(numChannels: 1, source: AndroidAudioSource.mic));
+      source = AndroidAudioSource.mic;
       _isStereo = false;
     }
-    debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo)');
+    debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo, source=${source.name})');
     stream.listen(_onAudioData);
     _isRunning = true;
+    if (_isStereo) _pose.start();
 
     // 시작 작업 도중 참조가 전부 사라졌다면(대기 중 stop() 호출) 바로 정리
     if (_startCount == 0) {
       await _stopStream();
     }
+  }
+
+  RecordConfig _recordConfig({required int numChannels, required AndroidAudioSource source}) {
+    return RecordConfig(
+      encoder: AudioEncoder.pcm16bits,
+      sampleRate: _sampleRate,
+      numChannels: numChannels,
+      iosConfig: const IosRecordConfig(
+        categoryOptions: [
+          IosAudioCategoryOption.mixWithOthers,
+          IosAudioCategoryOption.duckOthers,
+          IosAudioCategoryOption.allowBluetoothA2DP,
+        ],
+      ),
+      androidConfig: AndroidRecordConfig(
+        audioSource: source,
+        muteAudio: false,
+        manageBluetooth: false,
+        audioManagerMode: AudioManagerMode.modeNormal,
+      ),
+    );
   }
 
   void _onAudioData(Uint8List bytes) {
@@ -245,13 +255,46 @@ class SoundDetector {
       final detected = classify(scores);
       if (detected == DetectedSound.none) return;
 
-      final direction = TdoaAnalyzer.analyze(winL, winR);
+      // 모노 녹음은 두 채널이 같아 방향 정보가 없다
+      final pose = _pose.current;
+      final direction = _isStereo
+          ? TdoaAnalyzer.analyze(winL, winR, pose: pose)
+          : SoundDirection.unknown;
+      _reportDirectionDebug(detected, direction, winL, winR, pose);
       if (!_controller.isClosed) _controller.add(DetectionEvent(detected, direction));
     } catch (e, st) {
       debugPrint('❌ YAMNet 추론 오류: $e\n$st');
     } finally {
       _isInferring = false;
     }
+  }
+
+  /// 방향이 왜 그렇게 나왔는지 보여준다. lag 부호: + = 폰 상단 쪽에서 옴, - = 하단 쪽.
+  /// 폰 상단 끝에서 튼 경적은 +5~+7, 하단 끝은 -5~-7 근처가 정상이다.
+  /// 부호가 반대면 이 기기는 채널이 반대(개발자 옵션 "마이크 채널 반전"),
+  /// 어디서 틀어도 0 근처면 가짜 스테레오라 방향 추정이 불가능하다.
+  void _reportDirectionDebug(
+    DetectedSound sound,
+    SoundDirection direction,
+    List<double> winL,
+    List<double> winR,
+    DevicePose? pose,
+  ) {
+    final String detail;
+    if (!_isStereo) {
+      detail = '모노 녹음 — 이 기기는 방향 추정 불가';
+    } else {
+      final blocks = TdoaAnalyzer.selectBlocks(TdoaAnalyzer.estimateBlocks(winL, winR));
+      final lag = TdoaAnalyzer.medianLag(blocks);
+      final lagText = lag == null ? '-' : '${lag >= 0 ? '+' : ''}${lag.toStringAsFixed(1)}';
+      final poseText = pose == null
+          ? '자세 정보 없음'
+          : '앙각 ${pose.axisElevationDeg.toStringAsFixed(0)}° · 화면 ${pose.screenUp ? '위' : '아래'}'
+              '${pose.canEstimateDirection ? '' : ' (방향 낼 수 없는 자세)'}';
+      detail = 'lag $lagText · 유효 블록 ${blocks.length}개 · $poseText';
+    }
+    lastDirectionDebug.value = '${sound.name} → ${direction.label}\n$detail';
+    debugPrint('🧭 ${sound.name} → ${direction.name} | $detail');
   }
 
   DetectedSound classify(List<double> scores) {
