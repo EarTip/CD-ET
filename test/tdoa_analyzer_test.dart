@@ -96,6 +96,19 @@ void main() {
       final (_, b) = _stereo(_bandNoise(12), 0, noise: 0, seed: 2);
       expect(TdoaAnalyzer.selectBlocks(TdoaAnalyzer.estimateBlocks(a, b)), isEmpty);
     });
+
+    test('에너지만 큰 무상관 블록이 일관된 경적 블록을 탈락시키지 않는다', () {
+      const horn1 = BlockEstimate(5.0, 0.9, 1.0);
+      const horn2 = BlockEstimate(5.2, 0.9, 1.1);
+      const loudNoise = BlockEstimate(-3.0, 0.1, 100.0); // 신뢰도 하한 미만, 에너지는 훨씬 큼
+      final selected = TdoaAnalyzer.selectBlocks([horn1, loudNoise, horn2]);
+      expect(selected, [horn1, horn2]);
+    });
+
+    test('신뢰도를 통과한 블록이 없으면 비어 있다', () {
+      const noise = BlockEstimate(1.0, 0.1, 5.0);
+      expect(TdoaAnalyzer.selectBlocks([noise, noise]), isEmpty);
+    });
   });
 
   group('analyze (자세 보정 + 블록 투표)', () {
@@ -159,6 +172,12 @@ void main() {
       expect(TdoaAnalyzer.analyze(front1, front2, pose: _pose(-30)), SoundDirection.unknown);
     });
 
+    test('가로로 든 자세 (앞/뒤를 구분할 수 없음)', () {
+      final g = 9.8 * cos(pi / 4);
+      final landscape = DevicePose.fromGravity(g, 0, g);
+      expect(TdoaAnalyzer.analyze(front1, front2, pose: landscape), SoundDirection.unknown);
+    });
+
     test('두 채널이 동일 (모노 fallback·가짜 스테레오)', () {
       expect(TdoaAnalyzer.analyze(front1, List.of(front1), pose: _pose(45)), SoundDirection.unknown);
     });
@@ -189,6 +208,26 @@ void main() {
 
     test('책상 위에 화면이 위로 놓임 (수평)은 방향 추정 가능', () {
       expect(DevicePose.fromGravity(0, 0, 9.8).canEstimateDirection, isTrue);
+    });
+
+    test('가로로 세워 듦 (중력이 좌우 축)은 방향 추정 불가', () {
+      final p = DevicePose.fromGravity(9.8, 0, 1.0);
+      expect(p.sideGravityRatio, greaterThan(0.9));
+      expect(p.canEstimateDirection, isFalse);
+    });
+
+    test('가로로 45° 기울여 화면을 봄도 방향 추정 불가', () {
+      final g = 9.8 * cos(pi / 4);
+      expect(DevicePose.fromGravity(g, 0, g).canEstimateDirection, isFalse);
+    });
+
+    test('세로로 들고 살짝 기울어진 정도(좌우 성분 작음)는 방향 추정 가능', () {
+      final e = 45 * pi / 180;
+      final roll = 10 * pi / 180;
+      final p = DevicePose.fromGravity(
+          9.8 * sin(roll), 9.8 * cos(roll) * sin(e), 9.8 * cos(roll) * cos(e));
+      expect(p.sideGravityRatio, lessThan(0.3));
+      expect(p.canEstimateDirection, isTrue);
     });
   });
 }
