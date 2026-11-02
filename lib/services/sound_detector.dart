@@ -157,6 +157,7 @@ class SoundDetector {
       encoder: AudioEncoder.pcm16bits,
       sampleRate: _sampleRate,
       numChannels: numChannels,
+      audioInterruption: AudioInterruptionMode.none,
       iosConfig: const IosRecordConfig(
         categoryOptions: [
           IosAudioCategoryOption.mixWithOthers,

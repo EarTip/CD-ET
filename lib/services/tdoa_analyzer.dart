@@ -102,7 +102,7 @@ class TdoaAnalyzer {
   static const _minBlocks        = 2;      // 유효 블록이 이보다 적으면 unknown (블록 하나로는 판단하지 않음)
   static const _blockEnergyRatio = 0.3;    // 최대 블록 대비 이 비율 이상인 블록만 사용
   static const _minVoteShare     = 0.6;    // 이긴 방향의 가중치 비율 하한 (미달 시 unknown)
-  static const _sideThresholdDeg = 25.0;   // 수평면 기준: 90° ± 이 각도 안이면 측면
+  static const _sideThresholdDeg = 25.0;   // 수평면 기준: 90° ± 이 각도 안이면 앞뒤 구분 불가 (측면 판정은 비활성, 방향 미상 처리)
 
   /// 자세 게이트 (폰 축 앙각). 30°~95° 기울기에 해당
   static const minAxisElevationDeg = -5.0;
@@ -154,7 +154,10 @@ class TdoaAnalyzer {
     if (sinT < 1e-3) return SoundDirection.unknown;
     final cosPhi = (sinTheta / sinT).clamp(-1.0, 1.0);
 
-    if (cosPhi.abs() < sin(_sideThresholdDeg * pi / 180)) return SoundDirection.side;
+    // 측면 판정은 일단 사용하지 않는다. 범위가 좁아 반사·흔들림에 정면/후방으로 넘어가기 쉽고,
+    // 마이크가 한 축뿐이라 좌우를 구분할 수 없다. 앞뒤를 가르기 어려운 구간은 방향 미상으로 둔다.
+    // if (cosPhi.abs() < sin(_sideThresholdDeg * pi / 180)) return SoundDirection.side;
+    if (cosPhi.abs() < sin(_sideThresholdDeg * pi / 180)) return SoundDirection.unknown;
     return cosPhi > 0 ? SoundDirection.front : SoundDirection.behind;
   }
 

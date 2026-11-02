@@ -111,9 +111,14 @@ void main() {
       expect(TdoaAnalyzer.analyze(a, b, pose: walking), SoundDirection.behind);
     });
 
-    test('측면 소리 → side', () {
+    // 측면 판정은 비활성: 앞뒤를 가를 수 없는 측면 소리는 unknown (틀린 방향보다 생략)
+    // test('측면 소리 → side', () {
+    //   final (a, b) = _stereo(_bandNoise(5), _lagFor(90, 45));
+    //   expect(TdoaAnalyzer.analyze(a, b, pose: walking), SoundDirection.side);
+    // });
+    test('측면 소리 → unknown (측면 판정 비활성)', () {
       final (a, b) = _stereo(_bandNoise(5), _lagFor(90, 45));
-      expect(TdoaAnalyzer.analyze(a, b, pose: walking), SoundDirection.side);
+      expect(TdoaAnalyzer.analyze(a, b, pose: walking), SoundDirection.unknown);
     });
 
     test('기울기 보정: 45° 자세에서 방위각 60° 소리는 front (보정 전에는 측면으로 빠지던 경우)', () {
