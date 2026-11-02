@@ -61,9 +61,10 @@ class _HomePageState extends State<HomePage> {
 
   /// 감지는 켜져 있지만 마이크가 실제로는 대기 상태인지 여부.
   /// 정지 상태이거나, 이어폰 전용 모드에서 이어폰이 연결되지 않은 경우.
+  /// 데모 모드에서는 정지 상태여도 마이크가 켜져 있다.
   bool get _micWaiting =>
       _isListening &&
-      (_motionState == MotionState.still ||
+      ((_motionState == MotionState.still && !_settings.demoMode) ||
           (_settings.earphoneOnly && !_earphoneConnected));
 
   Future<void> _initAsync() async {
@@ -195,8 +196,12 @@ class _HomePageState extends State<HomePage> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    buildOutdoorBadge(),
-                    buildMotionBadge(),
+                    if (_settings.demoMode)
+                      buildDemoBadge()
+                    else ...[
+                      buildOutdoorBadge(),
+                      buildMotionBadge(),
+                    ],
                     buildSensitivityBadge(),
                     if (_settings.earphoneOnly && !_earphoneConnected) buildEarphoneBadge(),
                   ],
@@ -279,6 +284,30 @@ class _HomePageState extends State<HomePage> {
           Icon(Icons.headset_off_outlined, size: 16, color: color),
           SizedBox(width: 8),
           Text('이어폰 미연결', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+        ],
+      ),
+    );
+  }
+
+  /// 데모 모드에서는 걷기·실내외 조건을 쓰지 않으므로 두 배지 대신 이 배지 하나만 보여준다.
+  Widget buildDemoBadge() {
+    const color = Color(0xFF8E5BF6);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.slideshow_outlined, size: 16, color: color),
+          const SizedBox(width: 8),
+          Text(
+            _micWaiting ? '데모 모드 · 마이크 대기' : '데모 모드 · 마이크 활성',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+          ),
         ],
       ),
     );
@@ -407,6 +436,11 @@ class _HomePageState extends State<HomePage> {
         ),
         unselectedLabelStyle: const TextStyle(fontSize: 11),
         items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.home_outlined),
+            activeIcon: Icon(Icons.home),
+            label: '홈',
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart_outlined),
             activeIcon: Icon(Icons.bar_chart),

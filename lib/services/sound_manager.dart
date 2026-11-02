@@ -127,9 +127,13 @@ class SoundManager {
   }
 
   /// 마이크가 켜져 있어야 하는 조건: 사용자 on · 이동 중 · 실외 · (이어폰 전용이면) 이어폰 연결
+  /// 데모 모드에서는 이동 중 · 실외 조건을 건너뛴다.
   bool get _shouldListen {
-    if (!_userEnabled || _isStill) return false;
-    if (!_indoorOutdoor.isOutdoor) return false;
+    if (!_userEnabled) return false;
+    if (!_settings.demoMode) {
+      if (_isStill) return false;
+      if (!_indoorOutdoor.isOutdoor) return false;
+    }
     if (_settings.earphoneOnly && !_earphone.isConnected) return false;
     return true;
   }
