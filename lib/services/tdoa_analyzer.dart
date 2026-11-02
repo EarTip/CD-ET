@@ -31,6 +31,10 @@ class DetectionEvent {
 /// 방향을 낼 수 있는 자세인지 판단하기 위한 폰 자세.
 /// 상·하단 마이크 한 쌍은 "폰 길이 축 기준 각도"만 잴 수 있어서, 폰 축의 수평 투영이
 /// 진행 방향과 같은 자세(화면을 보며 들고 걷기)에서만 그 각도를 전/후방으로 해석할 수 있다.
+///
+/// 한계: 중력(가속도계)만으로는 폰의 수평 방위(yaw)를 알 수 없어서, 폰 상단이 실제로 진행
+/// 방향을 향하는지는 검증하지 못한다. 상단이 옆·뒤를 향한 자세는 구분되지 않으며,
+/// 가로로 든 자세처럼 중력으로 확실히 알 수 있는 경우만 걸러낸다.
 class DevicePose {
   /// 폰 길이 축(상단 방향)이 수평면 위로 올라간 각도.
   /// +90° = 똑바로 세움, 0° = 수평, 음수 = 상단이 아래를 향함
@@ -39,7 +43,14 @@ class DevicePose {
   /// 화면이 위쪽을 향하는지 (화면을 보며 걷는 자세의 전제)
   final bool screenUp;
 
-  const DevicePose({required this.axisElevationDeg, required this.screenUp});
+  /// 중력의 좌우(폰 짧은 축) 성분 비율 0~1. 세로로 들면 0 근처, 가로로 들면 1 근처.
+  final double sideGravityRatio;
+
+  const DevicePose({
+    required this.axisElevationDeg,
+    required this.screenUp,
+    this.sideGravityRatio = 0,
+  });
 
   /// 가속도계(중력 포함) 값으로 자세를 만든다. Android 좌표계 기준:
   /// 세워 들면 y ≈ +9.8, 화면이 하늘을 보면 z ≈ +9.8.
@@ -49,6 +60,7 @@ class DevicePose {
     return DevicePose(
       axisElevationDeg: asin((y / norm).clamp(-1.0, 1.0)) * 180 / pi,
       screenUp: z > 0,
+      sideGravityRatio: (x.abs() / norm).clamp(0.0, 1.0),
     );
   }
 
@@ -57,10 +69,12 @@ class DevicePose {
 
   /// "화면을 보며 들고 걷는" 자세일 때만 폰 축의 수평 투영 = 진행 방향으로 본다.
   /// 세워 들거나(기울기 부족) 주머니(대개 세워짐/뒤집힘)·화면이 아래를 향하면 false.
+  /// 가로로 든 자세는 폰 축이 좌우를 향해 앞/뒤를 구분할 수 없으므로 false.
   bool get canEstimateDirection =>
       screenUp &&
       axisElevationDeg >= TdoaAnalyzer.minAxisElevationDeg &&
-      axisElevationDeg <= TdoaAnalyzer.maxAxisElevationDeg;
+      axisElevationDeg <= TdoaAnalyzer.maxAxisElevationDeg &&
+      sideGravityRatio <= TdoaAnalyzer.maxSideGravityRatio;
 }
 
 // ──────────────────────────────────────────────
@@ -107,6 +121,9 @@ class TdoaAnalyzer {
   /// 자세 게이트 (폰 축 앙각). 30°~95° 기울기에 해당
   static const minAxisElevationDeg = -5.0;
   static const maxAxisElevationDeg = 60.0;
+
+  /// 가로 자세 게이트: 중력의 좌우 성분이 이 비율을 넘으면 가로로 든 것으로 본다 (약 37° 이상 눕힘).
+  static const maxSideGravityRatio = 0.6;
 
   /// 기기별 채널 매핑 보정. 스테레오 L/R이 어느 마이크인지는 기기마다 다르다.
   /// 폰 상단 끝에서 튼 경적이 음수 lag로 나오면 -1 (설정의 "마이크 채널 반전"이 이 값을 바꾼다).
@@ -246,11 +263,14 @@ class TdoaAnalyzer {
 
   /// 목표 대역 에너지가 충분하고(경적이 실제로 울린 구간) 신뢰도가 하한 이상인 블록만 남긴다.
   static List<BlockEstimate> selectBlocks(List<BlockEstimate> blocks) {
-    if (blocks.isEmpty) return const [];
-    final maxEnergy = blocks.map((b) => b.bandEnergy).reduce(max);
+    // 에너지 기준은 신뢰도를 통과한 블록끼리만 비교한다. 에너지만 크고 상관이 없는 잡음 블록이
+    // 기준을 끌어올리면, 더 작지만 일관된 경적 블록이 탈락해 방향이 unknown이 된다.
+    final reliable = blocks.where((b) => b.confidence >= _minConfidence).toList();
+    if (reliable.isEmpty) return const [];
+    final maxEnergy = reliable.map((b) => b.bandEnergy).reduce(max);
     return [
-      for (final b in blocks)
-        if (b.bandEnergy >= maxEnergy * _blockEnergyRatio && b.confidence >= _minConfidence) b,
+      for (final b in reliable)
+        if (b.bandEnergy >= maxEnergy * _blockEnergyRatio) b,
     ];
   }
 

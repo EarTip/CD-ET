@@ -113,7 +113,7 @@ class SettingsPage extends StatelessWidget {
                         _SwitchRow(
                           icon: Icons.slideshow_outlined,
                           label: '데모 모드',
-                          description: '걷기·실내외 조건 없이 마이크를 항상 켜요 (실내 테스트·전시용)',
+                          description: '걷기·실내외 조건 없이 마이크를 켜요. 이어폰 전용이면 이어폰 연결 시에만 동작해요 (실내 테스트·전시용)',
                           value: settings.demoMode,
                           onChanged: settings.setDemoMode,
                         ),

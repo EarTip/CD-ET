@@ -215,12 +215,14 @@ class SoundDetector {
 
       // await 이전에 동기로 플래그를 세워야 가드가 실제로 동작한다.
       _isInferring = true;
-      _activeInference = _runInference(winL, winR);
+      // 자세는 창이 확정되는 이 시점에 고정한다. 추론이 끝난 뒤에 읽으면 그 사이 바뀐 자세가 섞인다.
+      final pose = _isStereo ? _pose.current : null;
+      _activeInference = _runInference(winL, winR, pose);
       unawaited(_activeInference);
     }
   }
 
-  Future<void> _runInference(List<double> winL, List<double> winR) async {
+  Future<void> _runInference(List<double> winL, List<double> winR, DevicePose? pose) async {
     // dispatch 시점의 probe 콜백 — 이후에 시작된 probe로 이전 구간의 결과가 새지 않게 한다.
     final onScores = _onScores;
     final isolate = _isolateInterpreter;
@@ -257,7 +259,6 @@ class SoundDetector {
       if (detected == DetectedSound.none) return;
 
       // 모노 녹음은 두 채널이 같아 방향 정보가 없다
-      final pose = _pose.current;
       final direction = _isStereo
           ? TdoaAnalyzer.analyze(winL, winR, pose: pose)
           : SoundDirection.unknown;
@@ -343,6 +344,8 @@ class SoundDetector {
 
   Future<void> dispose() async {
     _disposed = true;
+    // probe가 start() 참조를 쥐고 있으면 _stopStream()이 호출되지 않으므로 직접 해제한다
+    _pose.stop();
     await _recorder.dispose();
     // isolate가 참조하는 네이티브 인터프리터를 닫기 전에 진행 중인 추론을 기다린다.
     try {

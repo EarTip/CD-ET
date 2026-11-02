@@ -299,12 +299,15 @@ class _HomePageState extends State<HomePage> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.slideshow_outlined, size: 16, color: color),
-          SizedBox(width: 8),
-          Text('데모 모드 · 마이크 활성', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          const Icon(Icons.slideshow_outlined, size: 16, color: color),
+          const SizedBox(width: 8),
+          Text(
+            _micWaiting ? '데모 모드 · 마이크 대기' : '데모 모드 · 마이크 활성',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
+          ),
         ],
       ),
     );
