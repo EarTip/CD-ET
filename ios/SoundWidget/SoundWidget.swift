@@ -74,6 +74,8 @@ struct SoundWidgetView: View {
 
     // 외부 링크와 구분되도록 앱이 만든 비밀값(token)을 붙인다. 앱이 이 값을 확인한 요청만 처리한다.
     // 비밀값은 소문자 hex라 인코딩이 필요 없다.
+    // 주의: eartips는 커스텀 스킴이라 같은 스킴을 등록한 다른 앱이 이 URL(비밀값 포함)을 받을 수 있다.
+    // 이 위험은 수용했다 (자세한 내용은 Dart의 WidgetService 주석).
     private func tapURL(for entry: SoundEntry) -> URL? {
         let action = entry.isListening ? "stop" : "start"
         var url = "eartips://widget?action=\(action)&homeWidget"

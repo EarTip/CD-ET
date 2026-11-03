@@ -46,6 +46,62 @@ void main() {
     });
   });
 
+  // isAuthorizedUri만 검증하면 요청 처리 경로에서 가드를 빼거나 뒤집어도 통과하므로,
+  // 실제 요청이 거치는 handleUri/onClick이 onToggleRequest 호출 여부를 막는지 확인한다.
+  group('요청 처리 경로의 검증 가드', () {
+    late List<bool> calls;
+
+    setUp(() {
+      calls = [];
+      WidgetService.tokenReader = () async => token;
+      WidgetService.onToggleRequest = (start) async => calls.add(start);
+    });
+
+    tearDown(WidgetService.resetForTesting);
+
+    test('올바른 비밀값이면 시작/중지 요청이 전달됨', () async {
+      await WidgetService.handleUri(uri('action=start&homeWidget&token=$token'));
+      await WidgetService.handleUri(uri('action=stop&homeWidget&token=$token'));
+      expect(calls, [true, false]);
+    });
+
+    test('비밀값이 없거나 다르면 시작/중지 모두 전달되지 않음', () async {
+      await WidgetService.handleUri(uri('action=start&homeWidget'));
+      await WidgetService.handleUri(uri('action=stop&homeWidget'));
+      await WidgetService.handleUri(uri('action=start&homeWidget&token=${'b' * 64}'));
+      await WidgetService.handleUri(uri('action=stop&homeWidget&token=${'b' * 64}'));
+      expect(calls, isEmpty);
+    });
+
+    test('앱의 비밀값을 읽지 못하면(null) 맞는 URL도 전달되지 않음', () async {
+      WidgetService.tokenReader = () async => null;
+      await WidgetService.handleUri(uri('action=start&homeWidget&token=$token'));
+      await WidgetService.handleUri(uri('action=stop&homeWidget&token=$token'));
+      expect(calls, isEmpty);
+    });
+
+    test('허용하지 않은 host/scheme/action, null URL은 전달되지 않음', () async {
+      final q = 'homeWidget&token=$token';
+      await WidgetService.handleUri(uri('action=start&$q', host: 'other'));
+      await WidgetService.handleUri(uri('action=start&$q', scheme: 'https'));
+      await WidgetService.handleUri(uri('action=toggle&$q'));
+      await WidgetService.handleUri(null);
+      expect(calls, isEmpty);
+    });
+
+    test('실행 중 클릭(onClick)도 같은 검증을 거침', () async {
+      WidgetService.onClick(uri('action=start&homeWidget'));
+      WidgetService.onClick(uri('action=start&homeWidget&token=${'b' * 64}'));
+      await pumpEventQueue();
+      expect(calls, isEmpty);
+
+      WidgetService.onClick(uri('action=start&homeWidget&token=$token'));
+      await pumpEventQueue();
+      expect(calls, [true]);
+    });
+
+  });
+
   group('비밀값 생성', () {
     test('소문자 hex 64자(32바이트)', () {
       expect(WidgetService.generateToken(), matches(RegExp(r'^[0-9a-f]{64}$')));
