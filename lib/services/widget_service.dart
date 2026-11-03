@@ -24,10 +24,27 @@ class WidgetService {
 
   static StreamSubscription<Uri?>? _clickSubscription;
 
+  /// 홈 화면이 준비되기 전에 들어온 iOS 위젯 요청. 준비된 뒤 [handleLaunchRequest]에서 처리한다.
+  static Uri? _pendingUri;
+
   static Future<void> init() async {
     if (Platform.isIOS) {
       await HomeWidget.setAppGroupId(appGroupId);
+      // 앱이 실행 중일 때 스플래시 화면에서 위젯을 탭해도 요청이 버려지지 않도록 미리 구독한다
+      _listenForClicks();
     }
+  }
+
+  static void _listenForClicks() {
+    _clickSubscription ??= HomeWidget.widgetClicked.listen(_onClick);
+  }
+
+  static void _onClick(Uri? uri) {
+    if (onToggleRequest == null) {
+      _pendingUri = uri;
+      return;
+    }
+    unawaited(_handleUri(uri));
   }
 
   /// 앱 시작 직후 한 번 호출. 위젯으로 앱이 켜졌다면 그 요청을 처리한다.
@@ -43,6 +60,10 @@ class WidgetService {
     } else if (Platform.isIOS) {
       final uri = await HomeWidget.initiallyLaunchedFromHomeWidget();
       await _handleUri(uri);
+      // 홈 화면이 뜨기 전에 구독으로 먼저 받아 둔 요청 (콜드 스타트 URL과 같으면 중복이므로 건너뜀)
+      final pending = _pendingUri;
+      _pendingUri = null;
+      if (pending != null && pending != uri) await _handleUri(pending);
     }
   }
 
@@ -55,13 +76,14 @@ class WidgetService {
         }
       });
     } else if (Platform.isIOS) {
-      _clickSubscription ??= HomeWidget.widgetClicked.listen(_handleUri);
+      _listenForClicks();
     }
   }
 
   static void dispose() {
     _clickSubscription?.cancel();
     _clickSubscription = null;
+    _pendingUri = null;
     if (Platform.isAndroid) _channel.setMethodCallHandler(null);
   }
 

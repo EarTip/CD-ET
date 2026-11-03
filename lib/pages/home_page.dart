@@ -83,15 +83,34 @@ class _HomePageState extends State<HomePage> {
   /// 위젯의 표시 상태를 실제 상태로 맞추고(앱이 강제 종료됐다면 "감지 중"이 남아 있을 수 있음),
   /// 위젯으로 앱이 켜졌다면 그 요청을 처리한다.
   Future<void> _syncWidgetOnStart() async {
-    await _ready;
-    await WidgetService.publishListening(_isListening);
-    await WidgetService.handleLaunchRequest();
+    try {
+      await _ready;
+      await WidgetService.publishListening(_isListening);
+      await WidgetService.handleLaunchRequest();
+    } catch (e) {
+      // unawaited로 실행되므로 여기서 잡지 않으면 처리되지 않은 비동기 오류가 된다
+      debugPrint('위젯 초기 동기화에 실패했습니다: $e');
+    }
   }
 
+  /// 위젯(Android 채널, iOS URL, 앱 시작 직후 요청)에서 온 감지 시작/중지 요청.
+  /// 실패해도 호출한 쪽(unawaited/채널 핸들러)으로 예외를 넘기지 않고 사용자에게 알린다.
   Future<void> _onWidgetToggleRequest(bool start) async {
-    await _ready;
-    if (!mounted || start == _isListening) return;
-    await _toggleListening();
+    try {
+      await _ready;
+      if (!mounted || start == _isListening) return;
+      await _toggleListening();
+    } catch (e) {
+      debugPrint('위젯 요청으로 감지를 ${start ? '시작' : '중지'}하지 못했습니다: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            start ? '감지를 시작하지 못했습니다. 다시 시도해 주세요.' : '감지를 중지하지 못했습니다. 다시 시도해 주세요.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _loadRecentLogs() async {
@@ -127,13 +146,19 @@ class _HomePageState extends State<HomePage> {
     try {
       if (_isListening) {
         await _manager.stopMonitoring();
-        await ForegroundService.stop();
+        final serviceStopped = await ForegroundService.stop();
         _manager.onDetected = null;
         setState(() {
           _motionState = MotionState.unknown;
           _sensitivityLevel = SensitivityLevel.normal;
           _indoorState = IndoorOutdoorState.indoor;
         });
+        // 마이크 감지는 이미 꺼졌으므로 상태는 중지로 바꾸되, 서비스가 남았다면 알린다
+        if (!serviceStopped && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('감지는 중지됐지만 알림이 남아 있을 수 있어요. 앱을 완전히 종료해 주세요.')),
+          );
+        }
       } else {
         _manager.onDetected = (event) async {
           try {
@@ -160,14 +185,27 @@ class _HomePageState extends State<HomePage> {
           });
         };
         // 백그라운드에서도 감지가 이어지도록 마이크보다 먼저 서비스를 올린다
-        await ForegroundService.start();
+        final serviceStarted = await ForegroundService.start();
         try {
           await _manager.startMonitoring();
         } catch (_) {
+          // 일부만 시작된 구독(이어폰·활동)과 마이크가 남지 않도록 정리한다.
+          // 정리 실패가 원래 예외를 가리지 않도록 여기서 삼킨다.
+          try {
+            await _manager.stopMonitoring();
+          } catch (e) {
+            debugPrint('감지 시작 실패 후 정리 중 오류: $e');
+          }
           await ForegroundService.stop();
           rethrow;
         }
         _earphoneConnected = _manager.earphoneConnected;
+        // 앱이 떠 있는 동안의 감지는 동작하지만 백그라운드 유지는 보장되지 않는다
+        if (!serviceStarted && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('백그라운드에서는 감지가 유지되지 않을 수 있어요.')),
+          );
+        }
       }
       setState(() => _isListening = !_isListening);
       await WidgetService.publishListening(_isListening);
