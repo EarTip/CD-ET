@@ -115,7 +115,9 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadRecentLogs() async {
     try {
-      final logs = await LogRepository.instance.recent();
+      final logs = await LogRepository.instance.since(
+        DateTime.now().subtract(RecentList.window),
+      );
       if (mounted) {
         setState(() {
           _recentLogs.clear();
@@ -181,7 +183,9 @@ class _HomePageState extends State<HomePage> {
               'direction': event.direction,
               'time': DateTime.now(),
             });
-            if (_recentLogs.length > 20) _recentLogs.removeLast();
+            _recentLogs.removeWhere(
+              (l) => DateTime.now().difference(l['time'] as DateTime) > RecentList.window,
+            );
           });
         };
         // 백그라운드에서도 감지가 이어지도록 마이크보다 먼저 서비스를 올린다
@@ -290,7 +294,7 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
             const SizedBox(height: 20),
-            const Text('최근 감지', style: sectionTitle),
+            const Text('최근 24시간 감지', style: sectionTitle),
             const SizedBox(height: 12),
             RecentList(logs: _recentLogs),
             const SizedBox(height: 20),
