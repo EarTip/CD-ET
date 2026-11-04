@@ -10,7 +10,7 @@ import 'settings_service.dart';
 import 'earphone_service.dart';
 
 class SoundManager {
-  final SoundDetector _detector = SoundDetector();
+  final SoundDetector _detector;
   final ActivityService _activity = ActivityService();
   final GeofenceService _geofence = GeofenceService();
   final NotificationService _notification = NotificationService();
@@ -32,6 +32,15 @@ class SoundManager {
   bool _isStill = false;
 
   void Function(DetectionEvent)? onDetected;
+
+  /// horn/siren/brake 가 임계값 이상일 때 즉시 호출 (설정·쿨다운 적용 전 원시 감지)
+  set onDangerDetected(DangerCallback? callback) => _detector.onDangerDetected = callback;
+
+  /// multiLabel=true 면 model_multilabel.tflite 로 여러 소리를 동시에 감지
+  SoundManager({bool multiLabel = false})
+      : _detector = SoundDetector(multiLabel: multiLabel);
+
+  Future<void> setMultiLabel(bool enabled) => _detector.setMultiLabel(enabled);
 
   Stream<DetectionEvent> get detectionStream => _detector.detectionStream;
   Stream<MotionState> get motionStream => _activity.motionStream;

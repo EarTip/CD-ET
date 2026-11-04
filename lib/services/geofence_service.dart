@@ -8,9 +8,10 @@ enum SensitivityLevel { normal, elevated, high }
 
 extension SensitivityThreshold on SensitivityLevel {
   double get threshold => switch (this) {
-        SensitivityLevel.high     => 0.04, // 횡단보도 80m 이내
-        SensitivityLevel.elevated => 0.06, // 주요 도로 30m 이내
-        SensitivityLevel.normal   => 0.08, // 일반 구역
+        // 분류 헤드(softmax/sigmoid) 확률 기준
+        SensitivityLevel.high     => 0.3, // 횡단보도 80m 이내
+        SensitivityLevel.elevated => 0.4, // 주요 도로 30m 이내
+        SensitivityLevel.normal   => 0.5, // 일반 구역
       };
 
   String get label => switch (this) {

@@ -41,3 +41,5 @@ flutter:
 
   assets:
     - assets/models/yamnet.tflite
+    - assets/models/model.tflite
+    - assets/models/model_multilabel.tflite

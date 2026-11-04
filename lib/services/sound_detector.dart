@@ -1,53 +1,83 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:record/record.dart';
-import 'package:tflite_flutter/tflite_flutter.dart';
+import '../models/sound_classifier.dart';
 import 'tdoa_analyzer.dart';
 
 export 'tdoa_analyzer.dart' show DetectedSound, SoundDirection, SoundDirectionInfo, DetectionEvent;
+export '../models/sound_classifier.dart' show SoundClass, SoundClassInfo, ClassificationResult;
 
-const _hornClasses  = [27, 302, 382, 390, 394];
-const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
-const _brakeClasses = [308];
-const _bicycleClasses = [198]; // Bicycle bell
+/// horn/siren/brake 가 연속 [kRequiredConsecutive] 윈도우 임계값 이상으로 감지됐을 때 호출
+typedef DangerCallback = void Function(DetectionEvent event, ClassificationResult result);
+
+// ──────────────────────────────────────────────
+// 오탐 억제 튜닝 상수
+// ──────────────────────────────────────────────
+
+/// 클래스별 기본 임계값 (일반 구역 기준)
+const Map<SoundClass, double> kClassThresholds = {
+  SoundClass.horn:    0.5,
+  SoundClass.siren:   0.5,
+  SoundClass.brake:   0.5,
+  SoundClass.bicycle: 0.7,
+};
+
+/// 같은 클래스가 이 횟수만큼 연속 윈도우에서 임계값을 넘어야 이벤트 발생
+const int kRequiredConsecutive = 2;
+
+/// 위치 민감도 임계값([setThreshold])의 기준값. 이 값과의 차이만큼
+/// 모든 클래스 임계값을 함께 내리거나 올린다 (예: 횡단보도 0.3 → 전 클래스 -0.2)
+const double kBaseSensitivityThreshold = 0.5;
 
 class SoundDetector {
   final AudioRecorder _recorder = AudioRecorder();
   final _controller      = StreamController<DetectionEvent>.broadcast();
   final _levelController = StreamController<double>.broadcast();
 
-  static const int _sampleRate = 16000;
-  static const int _windowSize = 15600;
+  static const int _sampleRate = SoundClassifier.sampleRate;
+  static const int _windowSize = SoundClassifier.windowSize;
   static const int _hopSize    = _sampleRate ~/ 4;
+
+  /// 윈도우 RMS 가 이 값 미만이면 무음으로 보고 추론을 건너뛴다 (≈ -46 dBFS)
+  static const double _silenceRms = 0.005;
 
   final List<double> _bufL = [];
   final List<double> _bufR = [];
 
-  Interpreter? _interpreter;
-  IsolateInterpreter? _isolateInterpreter;
+  final SoundClassifier _classifier;
   bool _isInferring = false;
   bool _disposed    = false;
   Future<void>? _activeInference;
   bool _isStereo    = false;
-  double _threshold = 0.15;
+  double _threshold = kBaseSensitivityThreshold;
+
+  /// 클래스별 연속 임계값 초과 윈도우 수
+  final Map<SoundClass, int> _streaks = {};
+
+  DangerCallback? onDangerDetected;
+
+  SoundDetector({bool multiLabel = false})
+      : _classifier = SoundClassifier(multiLabel: multiLabel);
 
   Stream<DetectionEvent> get detectionStream => _controller.stream;
   Stream<double> get audioLevelStream => _levelController.stream;
+  bool get multiLabel => _classifier.multiLabel;
 
+  /// 위치 민감도 임계값. 클래스별 임계값에 오프셋으로 반영된다.
   void setThreshold(double threshold) => _threshold = threshold;
 
-  Future<void> init() async {
-    final modelData = await rootBundle.load('assets/models/yamnet.tflite');
-    _interpreter = Interpreter.fromBuffer(modelData.buffer.asUint8List());
-    _isolateInterpreter =
-        await IsolateInterpreter.create(address: _interpreter!.address);
-    debugPrint('✅ 모델 로드 완료');
-  }
+  /// 현재 민감도가 반영된 클래스별 실제 임계값
+  double thresholdFor(SoundClass c) =>
+      ((kClassThresholds[c] ?? kBaseSensitivityThreshold) +
+              (_threshold - kBaseSensitivityThreshold))
+          .clamp(0.0, 1.0);
+  Future<void> setMultiLabel(bool enabled) => _classifier.setMultiLabel(enabled);
+
+  Future<void> init() => _classifier.load();
 
   Future<void> start() async {
-    if (_interpreter == null) await init();
+    if (!_classifier.isLoaded) await init();
 
     Stream<Uint8List> stream;
     try {
@@ -97,6 +127,7 @@ class SoundDetector {
 
   Future<void> stop() async {
     await _recorder.stop();
+    _streaks.clear();
     _bufL.clear();
     _bufR.clear();
     if (!_levelController.isClosed) _levelController.add(0.0);
@@ -149,56 +180,59 @@ class SoundDetector {
   }
 
   Future<void> _runInference(List<double> winL, List<double> winR) async {
-    final isolate = _isolateInterpreter;
-    if (isolate == null) {
-      debugPrint('❌ interpreter null — init() 호출 필요');
-      _isInferring = false;
-      return;
-    }
     try {
       final mono = Float32List.fromList(
         List.generate(_windowSize, (i) => (winL[i] + winR[i]) * 0.5),
       );
-      final output = [List.filled(521, 0.0)];
-      await isolate.run([mono], output);
 
-      final scores = output[0];
-
-      if (kDebugMode) {
-        final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
-          ..sort((a, b) => b.value.compareTo(a.value));
-        debugPrint('🔊 Top3: ${indexed.take(3).map((e) => '${e.key}=${e.value.toStringAsFixed(3)}').join(', ')}');
-
-        final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
-        final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
-        final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
-        final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
-        debugPrint('🎯 horn=${hornScore.toStringAsFixed(3)} siren=${sirenScore.toStringAsFixed(3)} brake=${brakeScore.toStringAsFixed(3)} bicycle=${bicycleScore.toStringAsFixed(3)} threshold=$_threshold');
+      double sumSq = 0;
+      for (final x in mono) {
+        sumSq += x * x;
+      }
+      final rms = sqrt(sumSq / mono.length);
+      if (rms < _silenceRms) {
+        _streaks.clear();
+        if (kDebugMode) {
+          debugPrint('🔇 무음 스킵 rms=${rms.toStringAsFixed(4)} (< $_silenceRms)');
+        }
+        return;
       }
 
-      final detected = classify(scores);
-      if (detected == DetectedSound.none) return;
+      final result = await _classifier.classify(mono);
+      if (_disposed) return;
+
+      final hits = result.detected(thresholdFor);
+      for (final c in SoundClass.values) {
+        if (c == SoundClass.background) continue;
+        _streaks[c] = hits.contains(c) ? (_streaks[c] ?? 0) + 1 : 0;
+      }
+      final confirmed =
+          hits.where((c) => _streaks[c]! >= kRequiredConsecutive).toList();
+
+      if (kDebugMode) {
+        final streakLog = SoundClass.values
+            .where((c) => c != SoundClass.background)
+            .map((c) => '${c.name}=${_streaks[c]}')
+            .join(' ');
+        debugPrint('🎯 rms=${rms.toStringAsFixed(4)} $result top=${result.top.name} '
+            'sens=$_threshold multiLabel=${result.multiLabel} '
+            '| streak $streakLog (need $kRequiredConsecutive)'
+            '${confirmed.isEmpty ? '' : ' → ✅ ${confirmed.map((c) => c.name).join(',')}'}');
+      }
+
+      if (confirmed.isEmpty) return;
 
       final direction = TdoaAnalyzer.analyze(winL, winR);
-      if (!_controller.isClosed) _controller.add(DetectionEvent(detected, direction));
+      for (final c in confirmed) {
+        final event = DetectionEvent(c.detectedSound, direction);
+        if (c.isDanger) onDangerDetected?.call(event, result);
+        if (!_controller.isClosed) _controller.add(event);
+      }
     } catch (e, st) {
-      debugPrint('❌ YAMNet 추론 오류: $e\n$st');
+      debugPrint('❌ 분류 추론 오류: $e\n$st');
     } finally {
       _isInferring = false;
     }
-  }
-
-  DetectedSound classify(List<double> scores) {
-    final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
-    final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
-    final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
-    final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
-
-    if (sirenScore > _threshold && sirenScore >= hornScore) return DetectedSound.siren;
-    if (hornScore  > _threshold && hornScore  >= sirenScore) return DetectedSound.horn;
-    if (bicycleScore > _threshold && bicycleScore >= brakeScore) return DetectedSound.bicycle;
-    if (brakeScore > _threshold) return DetectedSound.brake;
-    return DetectedSound.none;
   }
 
   Future<void> dispose() async {
@@ -208,8 +242,7 @@ class SoundDetector {
     try {
       await _activeInference;
     } catch (_) {}
-    await _isolateInterpreter?.close();
-    _interpreter?.close();
+    await _classifier.close();
     await _controller.close();
     await _levelController.close();
   }
