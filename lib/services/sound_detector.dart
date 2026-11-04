@@ -33,6 +33,10 @@ const int kRequiredConsecutive = 2;
 /// 모든 클래스 임계값을 함께 내리거나 올린다 (예: 횡단보도 0.3 → 전 클래스 -0.2)
 const double kBaseSensitivityThreshold = 0.5;
 
+/// 알림(TTS·햅틱) 재생 후 감지를 건너뛰는 시간. audioInterruption=none 이라 녹음이 계속되므로
+/// 자기 알림 소리를 다시 감지하지 않도록 막는다 (TTS ≈ 2초 + 창 길이 0.975초)
+const Duration kAlertSuppress = Duration(seconds: 3);
+
 /// 실내/외 probe 전용 YAMNet (521개 클래스 점수 출력). 감지는 [SoundClassifier]가 담당한다.
 const _ambientModelAsset = 'assets/models/yamnet.tflite';
 
@@ -83,6 +87,10 @@ class SoundDetector {
   /// 클래스별 연속 임계값 초과 윈도우 수
   final Map<SoundClass, int> _streaks = {};
 
+  /// 이 시각 전까지는 감지 추론을 건너뛴다 ([suppressFor])
+  DateTime? _suppressUntil;
+  bool _suppressLogged = false;
+
   DangerCallback? onDangerDetected;
 
   SoundDetector({bool multiLabel = false})
@@ -104,6 +112,14 @@ class SoundDetector {
               (_threshold - kBaseSensitivityThreshold))
           .clamp(0.0, 1.0);
   Future<void> setMultiLabel(bool enabled) => _classifier.setMultiLabel(enabled);
+
+  /// [duration] 동안 감지 추론을 건너뛰고 연속 카운트를 비운다. probe 점수 전달은 계속된다.
+  void suppressFor(Duration duration) {
+    final until = DateTime.now().add(duration);
+    if (_suppressUntil == null || until.isAfter(_suppressUntil!)) _suppressUntil = until;
+    _suppressLogged = false;
+    _streaks.clear();
+  }
 
   Future<void> init() => _classifier.load();
 
@@ -279,6 +295,19 @@ class SoundDetector {
         if (identical(onScores, _onScores)) onScores(output[0]);
       }
 
+      final suppressUntil = _suppressUntil;
+      if (suppressUntil != null) {
+        if (DateTime.now().isBefore(suppressUntil)) {
+          _streaks.clear();
+          if (!_suppressLogged) {
+            _suppressLogged = true;
+            debugPrint('🔇 알림 재생 중 감지 건너뜀 (${kAlertSuppress.inMilliseconds}ms)');
+          }
+          return;
+        }
+        _suppressUntil = null;
+      }
+
       double sumSq = 0;
       for (final x in mono) {
         sumSq += x * x;
@@ -294,6 +323,9 @@ class SoundDetector {
 
       final result = await _classifier.classify(mono);
       if (_disposed) return;
+      // 추론 도중 알림이 울렸으면 이 창의 결과는 버린다
+      final until = _suppressUntil;
+      if (until != null && DateTime.now().isBefore(until)) return;
 
       final hits = result.detected(thresholdFor);
       for (final c in SoundClass.values) {

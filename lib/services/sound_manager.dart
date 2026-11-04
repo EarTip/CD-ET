@@ -189,6 +189,9 @@ class SoundManager {
       final channels = _settings.alertChannels;
       debugPrint('🔔 알림 트리거: ${event.sound} (채널: ${channels.map((c) => c.label).join(', ')})');
 
+      // 녹음은 알림 중에도 계속되므로(audioInterruption=none) 자기 알림 소리를 감지하지 않게 막는다
+      _detector.suppressFor(kAlertSuppress);
+
       if (channels.contains(AlertChannel.preview)) {
         _notification.showSoundAlert(event.sound);
       }

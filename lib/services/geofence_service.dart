@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
@@ -33,6 +34,9 @@ class GeofenceService {
 
   SensitivityLevel _currentLevel = SensitivityLevel.high;
 
+  /// 위치 + Overpass 결과로 감도를 한 번이라도 정했는지 (false 면 초기값 사용 중)
+  bool _resolved = false;
+
   Stream<SensitivityLevel> get sensitivityStream => _sensitivityController.stream;
   SensitivityLevel get currentLevel => _currentLevel;
 
@@ -46,7 +50,11 @@ class GeofenceService {
   }
 
   Future<void> start() async {
-    if (!await _ensurePermission()) return;
+    if (!await _ensurePermission()) {
+      debugPrint('📍 감도 → ${_currentLevel.name} (초기값 — 위치 권한 없음)');
+      return;
+    }
+    debugPrint('📍 감도 → ${_currentLevel.name} (초기값 — 위치/Overpass 결과 대기 중)');
 
     // 시작 시 즉시 한 번 확인
     try {
@@ -57,7 +65,9 @@ class GeofenceService {
         ),
       );
       await _update(pos);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('📍 감도 유지 → ${_currentLevel.name} (초기값 — 현재 위치 확인 실패: $e)');
+    }
 
     // 40m 이상 이동할 때마다 재계산
     _positionSub = Geolocator.getPositionStream(
@@ -69,14 +79,24 @@ class GeofenceService {
   }
 
   Future<void> _update(Position pos) async {
-    final level = await _querySensitivity(pos.latitude, pos.longitude);
+    final (level, reason) = await _querySensitivity(pos.latitude, pos.longitude);
+    if (level == null) {
+      // 조회 실패 — 현재 수준 유지
+      debugPrint('📍 감도 유지 → ${_currentLevel.name} (${_resolved ? '' : '초기값 — '}$reason)');
+      return;
+    }
+    if (level != _currentLevel || !_resolved) {
+      debugPrint('📍 감도 → ${level.name} ($reason)');
+    }
+    _resolved = true;
     if (level != _currentLevel) {
       _currentLevel = level;
       _sensitivityController.add(level);
     }
   }
 
-  Future<SensitivityLevel> _querySensitivity(double lat, double lon) async {
+  /// 감도와 그 근거. 조회에 실패하면 level 은 null (호출 측에서 현재 수준 유지)
+  Future<(SensitivityLevel?, String)> _querySensitivity(double lat, double lon) async {
     // OSM Overpass API: 횡단보도(crossing) + 주요 도로(primary~motorway) 조회
     final query = '''
 [out:json][timeout:10];
@@ -92,12 +112,14 @@ out center;
           .post(Uri.parse(_overpassUrl), body: query)
           .timeout(const Duration(seconds: 9));
 
-      if (res.statusCode != 200) return _currentLevel;
+      if (res.statusCode != 200) return (null, 'Overpass HTTP ${res.statusCode}');
 
       final elements = (jsonDecode(res.body)['elements'] as List);
 
       bool nearCrosswalk = false;
       bool nearRoad      = false;
+      double? crosswalkDist;
+      double? roadDist;
 
       for (final el in elements) {
         final tags   = (el['tags'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -109,16 +131,20 @@ out center;
 
         if (tags['highway'] == 'crossing' && dist <= _crosswalkRadius) {
           nearCrosswalk = true;
+          crosswalkDist = dist;
           break; // crosswalk이 최우선
         }
-        if (dist <= _roadRadius) nearRoad = true;
+        if (dist <= _roadRadius) {
+          nearRoad = true;
+          roadDist = min(roadDist ?? dist, dist);
+        }
       }
 
-      if (nearCrosswalk) return SensitivityLevel.high;
-      if (nearRoad)      return SensitivityLevel.elevated;
-      return SensitivityLevel.normal;
-    } catch (_) {
-      return _currentLevel; // 네트워크 오류 시 현재 수준 유지
+      if (nearCrosswalk) return (SensitivityLevel.high, 'crosswalk ${crosswalkDist!.round()}m');
+      if (nearRoad)      return (SensitivityLevel.elevated, 'road ${roadDist!.round()}m');
+      return (SensitivityLevel.normal, '주변 횡단보도·주요 도로 없음');
+    } catch (e) {
+      return (null, 'Overpass 오류: $e'); // 네트워크 오류 시 현재 수준 유지
     }
   }
 
@@ -139,6 +165,7 @@ out center;
     _positionSub?.cancel();
     _positionSub = null;
     _currentLevel = SensitivityLevel.normal;
+    _resolved = false;
   }
 
   void dispose() {
