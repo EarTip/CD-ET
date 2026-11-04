@@ -11,7 +11,7 @@ import 'tdoa_analyzer.dart';
 export 'tdoa_analyzer.dart' show DetectedSound, SoundDirection, SoundDirectionInfo, DetectionEvent;
 export '../models/sound_classifier.dart' show SoundClass, SoundClassInfo, ClassificationResult;
 
-/// horn/siren/brake 가 연속 [kRequiredConsecutive] 윈도우 임계값 이상으로 감지됐을 때 호출
+/// horn/siren/brake 가 클래스별 연속 횟수([kClassRequiredConsecutive])만큼 임계값 이상으로 감지됐을 때 호출
 typedef DangerCallback = void Function(DetectionEvent event, ClassificationResult result);
 
 // ──────────────────────────────────────────────
@@ -26,8 +26,19 @@ const Map<SoundClass, double> kClassThresholds = {
   SoundClass.bicycle: 0.7,
 };
 
-/// 같은 클래스가 이 횟수만큼 연속 윈도우에서 임계값을 넘어야 이벤트 발생
-const int kRequiredConsecutive = 2;
+/// 같은 클래스가 이 횟수만큼 연속 윈도우에서 임계값을 넘어야 이벤트 발생 (맵에 없는 클래스의 기본값)
+const int kDefaultRequiredConsecutive = 2;
+
+/// 클래스별 연속 확인 횟수. bicycle 은 오탐이 잦아 한 번 더 확인한다
+const Map<SoundClass, int> kClassRequiredConsecutive = {
+  SoundClass.horn:    2,
+  SoundClass.siren:   2,
+  SoundClass.brake:   2,
+  SoundClass.bicycle: 3,
+};
+
+int requiredConsecutiveFor(SoundClass c) =>
+    kClassRequiredConsecutive[c] ?? kDefaultRequiredConsecutive;
 
 /// 위치 민감도 임계값([setThreshold])의 기준값. 이 값과의 차이만큼
 /// 모든 클래스 임계값을 함께 내리거나 올린다 (예: 횡단보도 0.3 → 전 클래스 -0.2)
@@ -333,16 +344,17 @@ class SoundDetector {
         _streaks[c] = hits.contains(c) ? (_streaks[c] ?? 0) + 1 : 0;
       }
       final confirmed =
-          hits.where((c) => _streaks[c]! >= kRequiredConsecutive).toList();
+          hits.where((c) => _streaks[c]! >= requiredConsecutiveFor(c)).toList();
 
       if (kDebugMode) {
+        // 클래스=현재/필요 (예: bicycle=2/3)
         final streakLog = SoundClass.values
             .where((c) => c != SoundClass.background)
-            .map((c) => '${c.name}=${_streaks[c]}')
+            .map((c) => '${c.name}=${_streaks[c]}/${requiredConsecutiveFor(c)}')
             .join(' ');
         debugPrint('🎯 rms=${rms.toStringAsFixed(4)} $result top=${result.top.name} '
             'sens=$_threshold multiLabel=${result.multiLabel} '
-            '| streak $streakLog (need $kRequiredConsecutive)'
+            '| streak $streakLog'
             '${confirmed.isEmpty ? '' : ' → ✅ ${confirmed.map((c) => c.name).join(',')}'}');
       }
 
