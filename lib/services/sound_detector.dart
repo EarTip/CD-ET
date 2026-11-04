@@ -4,15 +4,52 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
+import '../models/sound_classifier.dart';
 import 'pose_tracker.dart';
 import 'tdoa_analyzer.dart';
 
 export 'tdoa_analyzer.dart' show DetectedSound, SoundDirection, SoundDirectionInfo, DetectionEvent;
+export '../models/sound_classifier.dart' show SoundClass, SoundClassInfo, ClassificationResult;
 
-const _hornClasses  = [27, 302, 382, 390, 394];
-const _sirenClasses = [316, 317, 318, 396, 397, 398, 399, 400];
-const _brakeClasses = [308];
-const _bicycleClasses = [198]; // Bicycle bell
+/// horn/siren/brake 가 클래스별 연속 횟수([kClassRequiredConsecutive])만큼 임계값 이상으로 감지됐을 때 호출
+typedef DangerCallback = void Function(DetectionEvent event, ClassificationResult result);
+
+// ──────────────────────────────────────────────
+// 오탐 억제 튜닝 상수
+// ──────────────────────────────────────────────
+
+/// 클래스별 기본 임계값 (일반 구역 기준)
+const Map<SoundClass, double> kClassThresholds = {
+  SoundClass.horn:    0.5,
+  SoundClass.siren:   0.5,
+  SoundClass.brake:   0.5,
+  SoundClass.bicycle: 0.7,
+};
+
+/// 같은 클래스가 이 횟수만큼 연속 윈도우에서 임계값을 넘어야 이벤트 발생 (맵에 없는 클래스의 기본값)
+const int kDefaultRequiredConsecutive = 2;
+
+/// 클래스별 연속 확인 횟수. bicycle 은 오탐이 잦아 한 번 더 확인한다
+const Map<SoundClass, int> kClassRequiredConsecutive = {
+  SoundClass.horn:    2,
+  SoundClass.siren:   2,
+  SoundClass.brake:   2,
+  SoundClass.bicycle: 3,
+};
+
+int requiredConsecutiveFor(SoundClass c) =>
+    kClassRequiredConsecutive[c] ?? kDefaultRequiredConsecutive;
+
+/// 위치 민감도 임계값([setThreshold])의 기준값. 이 값과의 차이만큼
+/// 모든 클래스 임계값을 함께 내리거나 올린다 (예: 횡단보도 0.3 → 전 클래스 -0.2)
+const double kBaseSensitivityThreshold = 0.5;
+
+/// 알림(TTS·햅틱) 재생 후 감지를 건너뛰는 시간. audioInterruption=none 이라 녹음이 계속되므로
+/// 자기 알림 소리를 다시 감지하지 않도록 막는다 (TTS ≈ 2초 + 창 길이 0.975초)
+const Duration kAlertSuppress = Duration(seconds: 3);
+
+/// 실내/외 probe 전용 YAMNet (521개 클래스 점수 출력). 감지는 [SoundClassifier]가 담당한다.
+const _ambientModelAsset = 'assets/models/yamnet.tflite';
 
 // 실내/외 판단용 ambient 교통음 클래스 (실외 배경 소음)
 // 실제 모델에서 검증 필요 — 실외 오디오 샘플로 top-class 확인 권장
@@ -24,9 +61,12 @@ class SoundDetector {
   final _controller      = StreamController<DetectionEvent>.broadcast();
   final _levelController = StreamController<double>.broadcast();
 
-  static const int _sampleRate = 16000;
-  static const int _windowSize = 15600;
+  static const int _sampleRate = SoundClassifier.sampleRate;
+  static const int _windowSize = SoundClassifier.windowSize;
   static const int _hopSize    = _sampleRate ~/ 4;
+
+  /// 윈도우 RMS 가 이 값 미만이면 무음으로 보고 추론을 건너뛴다 (≈ -46 dBFS)
+  static const double _silenceRms = 0.005;
 
   /// Android 녹음 소스 시도 순서. unprocessed(기기 내부 처리 없음)가 방향 추정에는 유리하지만
   /// AGC가 없어 YAMNet 점수 분포가 바뀌고, 감지 임계값(0.04~0.08)과 실내/외 probe 임계값은
@@ -41,8 +81,7 @@ class SoundDetector {
   final List<double> _bufL = [];
   final List<double> _bufR = [];
 
-  Interpreter? _interpreter;
-  IsolateInterpreter? _isolateInterpreter;
+  final SoundClassifier _classifier;
   bool _isInferring = false;
   bool _disposed    = false;
   Future<void>? _activeInference;
@@ -50,23 +89,50 @@ class SoundDetector {
   bool _isRunning   = false;
   int  _startCount  = 0; // 참조 카운트 — 여러 호출자가 동시에 필요로 할 수 있음
   Future<void>? _startingFuture; // 시작 작업 직렬화 (동시 start() 호출 시 같은 작업 공유)
-  double _threshold = 0.15;
+  double _threshold = kBaseSensitivityThreshold;
+
+  // probe 가 처음 호출될 때 로드 — 평소 감지에는 쓰지 않는다
+  Interpreter? _ambientInterpreter;
+  IsolateInterpreter? _ambientIsolate;
+
+  /// 클래스별 연속 임계값 초과 윈도우 수
+  final Map<SoundClass, int> _streaks = {};
+
+  /// 이 시각 전까지는 감지 추론을 건너뛴다 ([suppressFor])
+  DateTime? _suppressUntil;
+  bool _suppressLogged = false;
+
+  DangerCallback? onDangerDetected;
+
+  SoundDetector({bool multiLabel = false})
+      : _classifier = SoundClassifier(multiLabel: multiLabel);
 
   // probe 중에만 설정되는 콜백 — 추론 결과를 외부로 전달
   void Function(List<double> scores)? _onScores;
 
   Stream<DetectionEvent> get detectionStream => _controller.stream;
   Stream<double> get audioLevelStream => _levelController.stream;
+  bool get multiLabel => _classifier.multiLabel;
 
+  /// 위치 민감도 임계값. 클래스별 임계값에 오프셋으로 반영된다.
   void setThreshold(double threshold) => _threshold = threshold;
 
-  Future<void> init() async {
-    final modelData = await rootBundle.load('assets/models/yamnet.tflite');
-    _interpreter = Interpreter.fromBuffer(modelData.buffer.asUint8List());
-    _isolateInterpreter =
-        await IsolateInterpreter.create(address: _interpreter!.address);
-    debugPrint('✅ 모델 로드 완료');
+  /// 현재 민감도가 반영된 클래스별 실제 임계값
+  double thresholdFor(SoundClass c) =>
+      ((kClassThresholds[c] ?? kBaseSensitivityThreshold) +
+              (_threshold - kBaseSensitivityThreshold))
+          .clamp(0.0, 1.0);
+  Future<void> setMultiLabel(bool enabled) => _classifier.setMultiLabel(enabled);
+
+  /// [duration] 동안 감지 추론을 건너뛰고 연속 카운트를 비운다. probe 점수 전달은 계속된다.
+  void suppressFor(Duration duration) {
+    final until = DateTime.now().add(duration);
+    if (_suppressUntil == null || until.isAfter(_suppressUntil!)) _suppressUntil = until;
+    _suppressLogged = false;
+    _streaks.clear();
   }
+
+  Future<void> init() => _classifier.load();
 
   /// 참조 카운트 기반 시작 — 여러 호출자(mic/probe)가 동시에 필요로 해도 안전.
   /// 이미 시작 작업이 진행 중이면 그 작업을 공유해서 중복 startStream() 방지.
@@ -115,13 +181,14 @@ class SoundDetector {
     _isRunning = false;
     _pose.stop();
     await _recorder.stop();
+    _streaks.clear();
     _bufL.clear();
     _bufR.clear();
     if (!_levelController.isClosed) _levelController.add(0.0);
   }
 
   Future<void> _beginStream() async {
-    if (_interpreter == null) await init();
+    if (!_classifier.isLoaded) await init();
 
     // 스테레오를 소스 순서대로 시도하고, 전부 실패하면 모노(mic)로 연다.
     Stream<Uint8List>? stream;
@@ -225,47 +292,86 @@ class SoundDetector {
   Future<void> _runInference(List<double> winL, List<double> winR, DevicePose? pose) async {
     // dispatch 시점의 probe 콜백 — 이후에 시작된 probe로 이전 구간의 결과가 새지 않게 한다.
     final onScores = _onScores;
-    final isolate = _isolateInterpreter;
-    if (isolate == null) {
-      debugPrint('❌ interpreter null — init() 호출 필요');
-      _isInferring = false;
-      return;
-    }
     try {
       final mono = Float32List.fromList(
         List.generate(_windowSize, (i) => (winL[i] + winR[i]) * 0.5),
       );
-      final output = [List.filled(521, 0.0)];
-      await isolate.run([mono], output);
 
-      final scores = output[0];
-
-      // dispatch 시점의 probe가 아직 활성일 때만 전달
-      if (identical(onScores, _onScores)) onScores?.call(scores);
-
-      if (kDebugMode) {
-        final indexed = List.generate(521, (i) => MapEntry(i, scores[i]))
-          ..sort((a, b) => b.value.compareTo(a.value));
-        debugPrint('🔊 Top3: ${indexed.take(3).map((e) => '${e.key}=${e.value.toStringAsFixed(3)}').join(', ')}');
-
-        final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
-        final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
-        final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
-        final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
-        debugPrint('🎯 horn=${hornScore.toStringAsFixed(3)} siren=${sirenScore.toStringAsFixed(3)} brake=${brakeScore.toStringAsFixed(3)} bicycle=${bicycleScore.toStringAsFixed(3)} threshold=$_threshold');
+      // probe 중일 때만 521개 점수 YAMNet 을 돌린다 (무음 스킵보다 먼저 — 배경음 판단용)
+      final ambient = _ambientIsolate;
+      if (onScores != null && ambient != null) {
+        final output = [List.filled(521, 0.0)];
+        await ambient.run([mono], output);
+        // dispatch 시점의 probe가 아직 활성일 때만 전달
+        if (identical(onScores, _onScores)) onScores(output[0]);
       }
 
-      final detected = classify(scores);
-      if (detected == DetectedSound.none) return;
+      final suppressUntil = _suppressUntil;
+      if (suppressUntil != null) {
+        if (DateTime.now().isBefore(suppressUntil)) {
+          _streaks.clear();
+          if (!_suppressLogged) {
+            _suppressLogged = true;
+            debugPrint('🔇 알림 재생 중 감지 건너뜀 (${kAlertSuppress.inMilliseconds}ms)');
+          }
+          return;
+        }
+        _suppressUntil = null;
+      }
+
+      double sumSq = 0;
+      for (final x in mono) {
+        sumSq += x * x;
+      }
+      final rms = sqrt(sumSq / mono.length);
+      if (rms < _silenceRms) {
+        _streaks.clear();
+        if (kDebugMode) {
+          debugPrint('🔇 무음 스킵 rms=${rms.toStringAsFixed(4)} (< $_silenceRms)');
+        }
+        return;
+      }
+
+      final result = await _classifier.classify(mono);
+      if (_disposed) return;
+      // 추론 도중 알림이 울렸으면 이 창의 결과는 버린다
+      final until = _suppressUntil;
+      if (until != null && DateTime.now().isBefore(until)) return;
+
+      final hits = result.detected(thresholdFor);
+      for (final c in SoundClass.values) {
+        if (c == SoundClass.background) continue;
+        _streaks[c] = hits.contains(c) ? (_streaks[c] ?? 0) + 1 : 0;
+      }
+      final confirmed =
+          hits.where((c) => _streaks[c]! >= requiredConsecutiveFor(c)).toList();
+
+      if (kDebugMode) {
+        // 클래스=현재/필요 (예: bicycle=2/3)
+        final streakLog = SoundClass.values
+            .where((c) => c != SoundClass.background)
+            .map((c) => '${c.name}=${_streaks[c]}/${requiredConsecutiveFor(c)}')
+            .join(' ');
+        debugPrint('🎯 rms=${rms.toStringAsFixed(4)} $result top=${result.top.name} '
+            'sens=$_threshold multiLabel=${result.multiLabel} '
+            '| streak $streakLog'
+            '${confirmed.isEmpty ? '' : ' → ✅ ${confirmed.map((c) => c.name).join(',')}'}');
+      }
+
+      if (confirmed.isEmpty) return;
 
       // 모노 녹음은 두 채널이 같아 방향 정보가 없다
       final direction = _isStereo
           ? TdoaAnalyzer.analyze(winL, winR, pose: pose)
           : SoundDirection.unknown;
-      _reportDirectionDebug(detected, direction, winL, winR, pose);
-      if (!_controller.isClosed) _controller.add(DetectionEvent(detected, direction));
+      for (final c in confirmed) {
+        final event = DetectionEvent(c.detectedSound, direction);
+        _reportDirectionDebug(event.sound, direction, winL, winR, pose);
+        if (c.isDanger) onDangerDetected?.call(event, result);
+        if (!_controller.isClosed) _controller.add(event);
+      }
     } catch (e, st) {
-      debugPrint('❌ YAMNet 추론 오류: $e\n$st');
+      debugPrint('❌ 분류 추론 오류: $e\n$st');
     } finally {
       _isInferring = false;
     }
@@ -299,23 +405,19 @@ class SoundDetector {
     debugPrint('🧭 ${sound.name} → ${direction.name} | $detail');
   }
 
-  DetectedSound classify(List<double> scores) {
-    final hornScore  = _hornClasses.map((i) => scores[i]).reduce(max);
-    final sirenScore = _sirenClasses.map((i) => scores[i]).reduce(max);
-    final brakeScore = _brakeClasses.map((i) => scores[i]).reduce(max);
-    final bicycleScore = _bicycleClasses.map((i) => scores[i]).reduce(max);
-
-    if (sirenScore > _threshold && sirenScore >= hornScore) return DetectedSound.siren;
-    if (hornScore  > _threshold && hornScore  >= sirenScore) return DetectedSound.horn;
-    if (bicycleScore > _threshold && bicycleScore >= brakeScore) return DetectedSound.bicycle;
-    if (brakeScore > _threshold) return DetectedSound.brake;
-    return DetectedSound.none;
+  Future<void> _loadAmbientModel() async {
+    if (_ambientIsolate != null) return;
+    final modelData = await rootBundle.load(_ambientModelAsset);
+    final interpreter = Interpreter.fromBuffer(modelData.buffer.asUint8List());
+    _ambientInterpreter = interpreter;
+    _ambientIsolate = await IsolateInterpreter.create(address: interpreter.address);
+    debugPrint('✅ 실내/외 probe 모델 로드 완료');
   }
 
   /// IndoorOutdoorService에서 주입받아 실내/외 판단에 사용
   /// 3초간 마이크를 켜서 교통 ambient 클래스가 감지되면 true 반환
   Future<bool> probeTrafficAmbient() async {
-    if (_interpreter == null) await init();
+    await _loadAmbientModel();
 
     bool detected = false;
 
@@ -351,8 +453,9 @@ class SoundDetector {
     try {
       await _activeInference;
     } catch (_) {}
-    await _isolateInterpreter?.close();
-    _interpreter?.close();
+    await _classifier.close();
+    await _ambientIsolate?.close();
+    _ambientInterpreter?.close();
     await _controller.close();
     await _levelController.close();
   }

@@ -40,3 +40,6 @@ flutter:
 
   assets:
     - assets/models/yamnet.tflite
+    - assets/models/yamnet_embedding.tflite
+    - assets/models/model.tflite
+    - assets/models/model_multilabel.tflite
