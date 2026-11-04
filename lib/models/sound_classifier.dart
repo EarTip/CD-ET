@@ -64,7 +64,7 @@ class SoundClassifier {
   static const int windowSize    = 15600; // 0.975초
   static const int _embeddingDim = 1024;
 
-  static const _yamnetAsset     = 'assets/models/yamnet.tflite';
+  static const _yamnetAsset     = 'assets/models/yamnet_embedding.tflite';
   static const _singleHeadAsset = 'assets/models/model.tflite';
   static const _multiHeadAsset  = 'assets/models/model_multilabel.tflite';
 
@@ -180,7 +180,7 @@ class SoundClassifier {
     final idx = outputs.indexWhere((t) => t.shape.last == _embeddingDim);
     if (idx < 0) {
       throw StateError(
-          'yamnet.tflite 에 $_embeddingDim 차원 임베딩 출력이 없습니다: ${outputs.map((t) => t.shape).toList()}');
+          'yamnet_embedding.tflite 에 $_embeddingDim 차원 임베딩 출력이 없습니다: ${outputs.map((t) => t.shape).toList()}');
     }
     _embeddingOutputIndex = idx;
     debugPrint('🧩 YAMNet input=$inputShape outputs=${outputs.map((t) => t.shape).toList()} → embedding #$idx');

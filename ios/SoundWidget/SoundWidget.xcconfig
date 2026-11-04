@@ -1,0 +1,2 @@
+// 앱과 같은 버전(FLUTTER_BUILD_NAME/NUMBER)을 쓰기 위해 Flutter가 생성하는 값을 가져온다
+#include "../Flutter/Generated.xcconfig"

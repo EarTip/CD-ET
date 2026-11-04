@@ -7,6 +7,13 @@ const _kTextDark  = Color(0xFF1A1A2E);
 const _kTextGrey  = Color(0xFF8A8FA8);
 const _kDisabled  = Color(0xFFB0B0B0);
 
+/// 숨긴 개발자 옵션: 제목을 연속으로 5번 탭하면 열린다 (앱 재시작 전까지 유지).
+final _devOptionsUnlocked = ValueNotifier<bool>(false);
+const _unlockTapCount = 5;
+const _unlockTapWindow = Duration(seconds: 2);
+int _headerTaps = 0;
+DateTime? _lastHeaderTapAt;
+
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -32,7 +39,7 @@ class SettingsPage extends StatelessWidget {
       backgroundColor: const Color(0xFFF2F5FA),
       body: SafeArea(
         child: ListenableBuilder(
-          listenable: settings,
+          listenable: Listenable.merge([settings, _devOptionsUnlocked]),
           builder: (context, _) {
             return SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -96,6 +103,38 @@ class SettingsPage extends StatelessWidget {
                       ),
                     ],
                   ),
+                  // 데모 모드가 켜져 있으면 끌 수 있도록 항상 보여준다.
+                  if (_devOptionsUnlocked.value || settings.demoMode) ...[
+                    const SizedBox(height: 24),
+                    const Text('개발자 옵션', style: sectionTitle),
+                    const SizedBox(height: 12),
+                    _Card(
+                      children: [
+                        _SwitchRow(
+                          icon: Icons.slideshow_outlined,
+                          label: '데모 모드',
+                          description: '걷기·실내외 조건 없이 마이크를 켜요. 이어폰 전용이면 이어폰 연결 시에만 동작해요 (실내 테스트·전시용)',
+                          value: settings.demoMode,
+                          onChanged: settings.setDemoMode,
+                        ),
+                        _SwitchRow(
+                          icon: Icons.swap_vert,
+                          label: '마이크 채널 반전',
+                          description: '폰 앞쪽에서 튼 경적이 계속 후방으로 나오면 켜세요',
+                          value: settings.swapMicChannels,
+                          onChanged: settings.setSwapMicChannels,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    ValueListenableBuilder<String?>(
+                      valueListenable: SoundDetector.lastDirectionDebug,
+                      builder: (context, text, _) => Text(
+                        '마지막 방향 판단\n${text ?? '아직 감지된 소리가 없어요'}',
+                        style: sectionCaption,
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 32),
                 ],
               ),
@@ -116,9 +155,28 @@ class SettingsPage extends StatelessWidget {
   static const sectionWarning = TextStyle(fontSize: 12, color: Color(0xFFFF9500), fontWeight: FontWeight.w600);
 
   Widget buildHeader(BuildContext context) {
-    return const Text(
-      '설정',
-      style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _kTextDark),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => _onHeaderTap(context),
+      child: const Text(
+        '설정',
+        style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _kTextDark),
+      ),
+    );
+  }
+
+  void _onHeaderTap(BuildContext context) {
+    if (_devOptionsUnlocked.value) return;
+    final now = DateTime.now();
+    final last = _lastHeaderTapAt;
+    _headerTaps = (last != null && now.difference(last) < _unlockTapWindow) ? _headerTaps + 1 : 1;
+    _lastHeaderTapAt = now;
+    if (_headerTaps < _unlockTapCount) return;
+
+    _headerTaps = 0;
+    _devOptionsUnlocked.value = true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('개발자 옵션이 열렸어요')),
     );
   }
 }
