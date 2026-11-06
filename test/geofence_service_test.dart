@@ -142,4 +142,55 @@ void main() {
       expect(levels, [SensitivityLevel.elevated]);
     });
   });
+
+  group('GeofenceService 겹친 조회', () {
+    late List<Completer<SensitivityLevel>> queries;
+    late GeofenceService overlapping;
+    late List<SensitivityLevel> levels;
+
+    setUp(() async {
+      queries = [];
+      levels = [];
+      overlapping = GeofenceService(
+        ensurePermission: () async => true,
+        currentPosition: () => Completer<Position>().future, // 끝나지 않음
+        positionStream: () => positionStream.stream,
+        querySensitivity: (lat, lon) {
+          final c = Completer<SensitivityLevel>();
+          queries.add(c);
+          return c.future;
+        },
+      );
+      addTearDown(overlapping.dispose);
+      overlapping.sensitivityStream.listen(levels.add);
+      await overlapping.start();
+      positionStream.add(_position()); // 조회 A
+      positionStream.add(_position()); // 조회 B
+      await pumpEventQueue();
+      expect(queries.length, 2);
+    });
+
+    test('더 최신 위치의 결과가 먼저 적용되면 늦게 끝난 오래된 결과는 버린다', () async {
+      queries[1].complete(SensitivityLevel.elevated); // B
+      await pumpEventQueue();
+      queries[0].complete(SensitivityLevel.high); // A (오래된 위치)
+      await pumpEventQueue();
+
+      expect(levels, [SensitivityLevel.elevated]);
+      expect(overlapping.currentLevel, SensitivityLevel.elevated);
+    });
+
+    test('더 최신 조회가 실패해도 먼저 요청한 조회의 성공 결과는 반영한다', () async {
+      queries[1].completeError(Exception('HTTP 오류')); // B 실패
+      await pumpEventQueue();
+      expect(levels, isEmpty);
+      expect(overlapping.currentLevel, SensitivityLevel.high); // 초기값 유지
+
+      queries[0].complete(SensitivityLevel.normal); // A 성공
+      await pumpEventQueue();
+
+      expect(levels, [SensitivityLevel.normal]);
+      expect(overlapping.currentLevel, SensitivityLevel.normal);
+    });
+  });
 }

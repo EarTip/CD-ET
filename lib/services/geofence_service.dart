@@ -143,7 +143,13 @@ class GeofenceService {
   /// 감도와 그 근거. 조회에 실패하면 level 은 null (호출 측에서 현재 수준 유지)
   Future<(SensitivityLevel?, String)> _querySensitivity(double lat, double lon) async {
     final override = _querySensitivityOverride;
-    if (override != null) return (await override(lat, lon), '주입된 조회');
+    if (override != null) {
+      try {
+        return (await override(lat, lon), '주입된 조회');
+      } catch (e) {
+        return (null, '주입된 조회 오류: $e'); // 실제 조회와 같이 실패는 null
+      }
+    }
 
     // OSM Overpass API: 횡단보도(crossing) + 주요 도로(primary~motorway) 조회
     final query = '''
