@@ -5,9 +5,20 @@ class RecentList extends StatelessWidget {
   final List<Map<String, dynamic>> logs;
   const RecentList({super.key, required this.logs});
 
+  /// 최근 감지에 보여줄 기간 (통계는 DB 전체 기록을 그대로 사용)
+  static const window = Duration(hours: 24);
+
+  /// 목록 칸의 최대 높이. 넘치면 칸 안에서 스크롤
+  static const _maxHeight = 320.0;
+
   @override
   Widget build(BuildContext context) {
-    if (logs.isEmpty) {
+    final now = DateTime.now();
+    final visible = logs
+        .where((l) => now.difference(l['time'] as DateTime) <= window)
+        .toList();
+
+    if (visible.isEmpty) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 32),
@@ -17,10 +28,14 @@ class RecentList extends StatelessWidget {
         ),
         child: const Column(
           children: [
-            Icon(Icons.hearing_disabled_outlined, color: Color(0xFFB0B8CC), size: 36),
+            Icon(
+              Icons.hearing_disabled_outlined,
+              color: Color(0xFFB0B8CC),
+              size: 36,
+            ),
             SizedBox(height: 8),
             Text(
-              '아직 감지된 소리가 없어요',
+              '최근 24시간 동안 감지된 소리가 없어요',
               style: TextStyle(fontSize: 13, color: Color(0xFFB0B8CC)),
             ),
           ],
@@ -28,97 +43,147 @@ class RecentList extends StatelessWidget {
       );
     }
 
-    return Column(
-      children: logs.map((log) {
-        final sound     = log['sound']     as DetectedSound;
-        final direction = log['direction'] as SoundDirection;
-        final time      = log['time']      as DateTime;
-        final info      = _soundInfo(sound);
-        final dirInfo   = _dirInfo(direction);
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 10),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.04),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
+    return Container(
+      constraints: const BoxConstraints(maxHeight: _maxHeight),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFE9EEF6),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: Scrollbar(
+          child: ListView.builder(
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
+            itemCount: visible.length,
+            itemBuilder: (context, i) => _buildItem(visible[i]),
           ),
-          child: Row(
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: info.color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItem(Map<String, dynamic> log) {
+    final sound = log['sound'] as DetectedSound;
+    final direction = log['direction'] as SoundDirection;
+    final time = log['time'] as DateTime;
+    final info = _soundInfo(sound);
+    final dirInfo = _dirInfo(direction);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: info.color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(info.icon, color: info.color, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  info.label,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1A1A2E),
+                  ),
                 ),
-                child: Icon(info.icon, color: info.color, size: 20),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      info.label,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF1A1A2E),
-                      ),
-                    ),
-                    if (direction != SoundDirection.unknown) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Icon(dirInfo.icon, size: 12, color: dirInfo.color),
-                          const SizedBox(width: 4),
-                          Text(
-                            direction.label,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: dirInfo.color,
-                            ),
-                          ),
-                        ],
+                if (direction != SoundDirection.unknown) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(dirInfo.icon, size: 12, color: dirInfo.color),
+                      const SizedBox(width: 4),
+                      Text(
+                        direction.label,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                          color: dirInfo.color,
+                        ),
                       ),
                     ],
-                  ],
-                ),
-              ),
-              Text(
-                _timeAgo(time),
-                style: const TextStyle(fontSize: 12, color: Color(0xFF8A8FA8)),
-              ),
-            ],
+                  ),
+                ],
+              ],
+            ),
           ),
-        );
-      }).toList(),
+          Text(
+            _timeAgo(time),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF8A8FA8)),
+          ),
+        ],
+      ),
     );
   }
 
   _SoundInfo _soundInfo(DetectedSound sound) => switch (sound) {
-        DetectedSound.horn  => _SoundInfo(Icons.car_crash_outlined,     '경적 감지됨',    const Color(0xFFFF6B6B)),
-        DetectedSound.siren => _SoundInfo(Icons.emergency_outlined,     '사이렌 감지됨',  const Color(0xFFFFB347)),
-        DetectedSound.brake => _SoundInfo(Icons.directions_car_outlined,'급브레이크 감지됨', const Color(0xFFFF9F43)),
-        DetectedSound.bicycle => _SoundInfo(Icons.pedal_bike,          '자전거 벨 감지됨', const Color(0xFF4ECDC4)),
-        DetectedSound.none  => _SoundInfo(Icons.volume_off_outlined,    '알 수 없음',    const Color(0xFFB0B8CC)),
-      };
+    DetectedSound.horn => _SoundInfo(
+      Icons.car_crash_outlined,
+      '경적 감지됨',
+      const Color(0xFFFF6B6B),
+    ),
+    DetectedSound.siren => _SoundInfo(
+      Icons.emergency_outlined,
+      '사이렌 감지됨',
+      const Color(0xFFFFB347),
+    ),
+    DetectedSound.brake => _SoundInfo(
+      Icons.directions_car_outlined,
+      '급브레이크 감지됨',
+      const Color(0xFFFF9F43),
+    ),
+    DetectedSound.bicycle => _SoundInfo(
+      Icons.pedal_bike,
+      '자전거 벨 감지됨',
+      const Color(0xFF4ECDC4),
+    ),
+    DetectedSound.none => _SoundInfo(
+      Icons.volume_off_outlined,
+      '알 수 없음',
+      const Color(0xFFB0B8CC),
+    ),
+  };
 
   _DirInfo _dirInfo(SoundDirection dir) => switch (dir) {
-        SoundDirection.front   => _DirInfo(Icons.arrow_upward,   const Color(0xFFFF3B30)),
-        SoundDirection.behind  => _DirInfo(Icons.arrow_downward, const Color(0xFFFF9500)),
-        SoundDirection.side    => _DirInfo(Icons.arrow_forward,  const Color(0xFF5B9CF6)),
-        SoundDirection.unknown => _DirInfo(Icons.help_outline,   const Color(0xFFB0B8CC)),
-      };
+    SoundDirection.front => _DirInfo(
+      Icons.arrow_upward,
+      const Color(0xFFFF3B30),
+    ),
+    SoundDirection.behind => _DirInfo(
+      Icons.arrow_downward,
+      const Color(0xFFFF9500),
+    ),
+    SoundDirection.side => _DirInfo(
+      Icons.arrow_forward,
+      const Color(0xFF5B9CF6),
+    ),
+    SoundDirection.unknown => _DirInfo(
+      Icons.help_outline,
+      const Color(0xFFB0B8CC),
+    ),
+  };
 
   String _timeAgo(DateTime time) {
     final diff = DateTime.now().difference(time);

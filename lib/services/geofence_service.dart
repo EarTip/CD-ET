@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:http/http.dart' as http;
 
@@ -8,9 +9,10 @@ enum SensitivityLevel { normal, elevated, high }
 
 extension SensitivityThreshold on SensitivityLevel {
   double get threshold => switch (this) {
-        SensitivityLevel.high     => 0.04, // 횡단보도 80m 이내
-        SensitivityLevel.elevated => 0.06, // 주요 도로 30m 이내
-        SensitivityLevel.normal   => 0.08, // 일반 구역
+        // 분류 헤드(softmax/sigmoid) 확률 기준
+        SensitivityLevel.high     => 0.3, // 횡단보도 80m 이내
+        SensitivityLevel.elevated => 0.4, // 주요 도로 30m 이내
+        SensitivityLevel.normal   => 0.5, // 일반 구역
       };
 
   String get label => switch (this) {
@@ -34,6 +36,9 @@ class GeofenceService {
   int _generation = 0;
 
   SensitivityLevel _currentLevel = SensitivityLevel.high;
+
+  /// 위치 + Overpass 결과로 감도를 한 번이라도 정했는지 (false 면 초기값 사용 중)
+  bool _resolved = false;
 
   /// 위치 권한 확인, 현재 위치, 위치 스트림, 주변 조회를 테스트에서 바꿔 끼울 수 있게 열어 둔다.
   /// 인자를 주지 않으면 실제 Geolocator/네트워크를 쓴다.
@@ -79,7 +84,11 @@ class GeofenceService {
       );
 
   Future<void> start() async {
-    if (!await _ensurePermission()) return;
+    if (!await _ensurePermission()) {
+      debugPrint('📍 감도 → ${_currentLevel.name} (초기값 — 위치 권한 없음)');
+      return;
+    }
+    debugPrint('📍 감도 → ${_currentLevel.name} (초기값 — 위치/Overpass 결과 대기 중)');
 
     final generation = ++_generation;
 
@@ -99,7 +108,9 @@ class GeofenceService {
       // 조회 중에 중지(또는 다시 시작)됐다면 결과를 쓰지 않는다
       if (generation != _generation) return;
       await _update(pos);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('📍 감도 유지 → ${_currentLevel.name} (초기값 — 현재 위치 확인 실패: $e)');
+    }
   }
 
   /// 위치가 도착할 때마다 올라가는 번호와, 지금까지 적용된 가장 최신 위치의 번호
@@ -109,10 +120,19 @@ class GeofenceService {
   Future<void> _update(Position pos) async {
     final generation = _generation;
     final seq = ++_positionSeq;
-    final level = await _querySensitivity(pos.latitude, pos.longitude);
+    final (level, reason) = await _querySensitivity(pos.latitude, pos.longitude);
     // 네트워크 조회가 끝나기 전에 중지됐다면 이미 초기화된 상태를 덮어쓰지 않는다
     // 더 최신 위치의 결과가 이미 적용됐다면 이 결과는 오래된 것이므로 버린다
     if (generation != _generation || seq < _appliedSeq) return;
+    if (level == null) {
+      // 조회 실패 — 현재 수준 유지
+      debugPrint('📍 감도 유지 → ${_currentLevel.name} (${_resolved ? '' : '초기값 — '}$reason)');
+      return;
+    }
+    if (level != _currentLevel || !_resolved) {
+      debugPrint('📍 감도 → ${level.name} ($reason)');
+    }
+    _resolved = true;
     _appliedSeq = seq;
     if (level != _currentLevel) {
       _currentLevel = level;
@@ -120,9 +140,10 @@ class GeofenceService {
     }
   }
 
-  Future<SensitivityLevel> _querySensitivity(double lat, double lon) async {
+  /// 감도와 그 근거. 조회에 실패하면 level 은 null (호출 측에서 현재 수준 유지)
+  Future<(SensitivityLevel?, String)> _querySensitivity(double lat, double lon) async {
     final override = _querySensitivityOverride;
-    if (override != null) return override(lat, lon);
+    if (override != null) return (await override(lat, lon), '주입된 조회');
 
     // OSM Overpass API: 횡단보도(crossing) + 주요 도로(primary~motorway) 조회
     final query = '''
@@ -139,12 +160,14 @@ out center;
           .post(Uri.parse(_overpassUrl), body: query)
           .timeout(const Duration(seconds: 9));
 
-      if (res.statusCode != 200) return _currentLevel;
+      if (res.statusCode != 200) return (null, 'Overpass HTTP ${res.statusCode}');
 
       final elements = (jsonDecode(res.body)['elements'] as List);
 
       bool nearCrosswalk = false;
       bool nearRoad      = false;
+      double? crosswalkDist;
+      double? roadDist;
 
       for (final el in elements) {
         final tags   = (el['tags'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -156,16 +179,20 @@ out center;
 
         if (tags['highway'] == 'crossing' && dist <= _crosswalkRadius) {
           nearCrosswalk = true;
+          crosswalkDist = dist;
           break; // crosswalk이 최우선
         }
-        if (dist <= _roadRadius) nearRoad = true;
+        if (dist <= _roadRadius) {
+          nearRoad = true;
+          roadDist = min(roadDist ?? dist, dist);
+        }
       }
 
-      if (nearCrosswalk) return SensitivityLevel.high;
-      if (nearRoad)      return SensitivityLevel.elevated;
-      return SensitivityLevel.normal;
-    } catch (_) {
-      return _currentLevel; // 네트워크 오류 시 현재 수준 유지
+      if (nearCrosswalk) return (SensitivityLevel.high, 'crosswalk ${crosswalkDist!.round()}m');
+      if (nearRoad)      return (SensitivityLevel.elevated, 'road ${roadDist!.round()}m');
+      return (SensitivityLevel.normal, '주변 횡단보도·주요 도로 없음');
+    } catch (e) {
+      return (null, 'Overpass 오류: $e'); // 네트워크 오류 시 현재 수준 유지
     }
   }
 
@@ -187,6 +214,7 @@ out center;
     _positionSub?.cancel();
     _positionSub = null;
     _currentLevel = SensitivityLevel.normal;
+    _resolved = false;
   }
 
   void dispose() {

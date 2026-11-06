@@ -11,7 +11,7 @@ import 'settings_service.dart';
 import 'earphone_service.dart';
 
 class SoundManager {
-  final SoundDetector _detector = SoundDetector();
+  final SoundDetector _detector;
   final ActivityService _activity = ActivityService();
   final GeofenceService _geofence = GeofenceService();
   final NotificationService _notification = NotificationService();
@@ -37,6 +37,15 @@ class SoundManager {
   MotionState _lastMotion = MotionState.unknown;
 
   void Function(DetectionEvent)? onDetected;
+
+  /// horn/siren/brake 가 임계값 이상일 때 즉시 호출 (설정·쿨다운 적용 전 원시 감지)
+  set onDangerDetected(DangerCallback? callback) => _detector.onDangerDetected = callback;
+
+  /// multiLabel=true 면 model_multilabel.tflite 로 여러 소리를 동시에 감지
+  SoundManager({bool multiLabel = false})
+      : _detector = SoundDetector(multiLabel: multiLabel);
+
+  Future<void> setMultiLabel(bool enabled) => _detector.setMultiLabel(enabled);
 
   Stream<DetectionEvent> get detectionStream => _detector.detectionStream;
   Stream<MotionState> get motionStream => _activity.motionStream;
@@ -179,6 +188,9 @@ class SoundManager {
 
       final channels = _settings.alertChannels;
       debugPrint('🔔 알림 트리거: ${event.sound} (채널: ${channels.map((c) => c.label).join(', ')})');
+
+      // 녹음은 알림 중에도 계속되므로(audioInterruption=none) 자기 알림 소리를 감지하지 않게 막는다
+      _detector.suppressFor(kAlertSuppress);
 
       if (channels.contains(AlertChannel.preview)) {
         _notification.showSoundAlert(event.sound);

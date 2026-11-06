@@ -41,6 +41,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/build/
 
 # Firebase 민감한 파일 (절대 올리면 안 됨)
 android/app/google-services.json
