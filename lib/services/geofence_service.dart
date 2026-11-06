@@ -102,11 +102,18 @@ class GeofenceService {
     } catch (_) {}
   }
 
+  /// 위치가 도착할 때마다 올라가는 번호와, 지금까지 적용된 가장 최신 위치의 번호
+  int _positionSeq = 0;
+  int _appliedSeq = 0;
+
   Future<void> _update(Position pos) async {
     final generation = _generation;
+    final seq = ++_positionSeq;
     final level = await _querySensitivity(pos.latitude, pos.longitude);
     // 네트워크 조회가 끝나기 전에 중지됐다면 이미 초기화된 상태를 덮어쓰지 않는다
-    if (generation != _generation) return;
+    // 더 최신 위치의 결과가 이미 적용됐다면 이 결과는 오래된 것이므로 버린다
+    if (generation != _generation || seq < _appliedSeq) return;
+    _appliedSeq = seq;
     if (level != _currentLevel) {
       _currentLevel = level;
       _sensitivityController.add(level);
