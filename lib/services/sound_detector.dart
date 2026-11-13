@@ -48,6 +48,10 @@ const double kBaseSensitivityThreshold = 0.5;
 /// 자기 알림 소리를 다시 감지하지 않도록 막는다 (TTS ≈ 2초 + 창 길이 0.975초)
 const Duration kAlertSuppress = Duration(seconds: 3);
 
+/// 윈도우 RMS 가 이 값 미만이면 추론을 건너뛰고 연속 확인을 초기화한다 (≈ -38 dBFS).
+/// rms 0.008~0.010 의 약한 상시 소음이 siren 0.9 이상으로 오탐돼 올렸다 (실제 사이렌은 0.016~0.026)
+const double kMinRms = 0.012;
+
 /// 실내/외 probe 전용 YAMNet (521개 클래스 점수 출력). 감지는 [SoundClassifier]가 담당한다.
 const _ambientModelAsset = 'assets/models/yamnet.tflite';
 
@@ -64,9 +68,6 @@ class SoundDetector {
   static const int _sampleRate = SoundClassifier.sampleRate;
   static const int _windowSize = SoundClassifier.windowSize;
   static const int _hopSize    = _sampleRate ~/ 4;
-
-  /// 윈도우 RMS 가 이 값 미만이면 무음으로 보고 추론을 건너뛴다 (≈ -46 dBFS)
-  static const double _silenceRms = 0.005;
 
   /// Android 녹음 소스 시도 순서. unprocessed(기기 내부 처리 없음)가 방향 추정에는 유리하지만
   /// AGC가 없어 YAMNet 점수 분포가 바뀌고, 감지 임계값(0.04~0.08)과 실내/외 probe 임계값은
@@ -324,10 +325,10 @@ class SoundDetector {
         sumSq += x * x;
       }
       final rms = sqrt(sumSq / mono.length);
-      if (rms < _silenceRms) {
+      if (rms < kMinRms) {
         _streaks.clear();
         if (kDebugMode) {
-          debugPrint('🔇 무음 스킵 rms=${rms.toStringAsFixed(4)} (< $_silenceRms)');
+          debugPrint('🔇 무음 스킵 rms=${rms.toStringAsFixed(4)} (< $kMinRms)');
         }
         return;
       }
