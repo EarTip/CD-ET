@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import '../models/sound_classifier.dart';
+import '../models/sound_thresholds.dart';
 import 'pose_tracker.dart';
 import 'tdoa_analyzer.dart';
 
@@ -18,7 +19,8 @@ typedef DangerCallback = void Function(DetectionEvent event, ClassificationResul
 // 오탐 억제 튜닝 상수
 // ──────────────────────────────────────────────
 
-/// 클래스별 기본 임계값 (일반 구역 기준)
+/// 클래스별 기본 임계값 (일반 구역 기준).
+/// 단일 라벨은 [kThresholdsAsset] 값을 우선 쓰고, 파일을 못 읽었을 때와 다중 라벨에서만 이 값을 쓴다.
 const Map<SoundClass, double> kClassThresholds = {
   SoundClass.horn:    0.5,
   SoundClass.siren:   0.5,
@@ -26,10 +28,15 @@ const Map<SoundClass, double> kClassThresholds = {
   SoundClass.bicycle: 0.7,
 };
 
+/// 단일 라벨 헤드(model.tflite)의 검증 결과로 뽑은 클래스별 임계값.
+/// 모델을 교체하면 노트북의 임계값 계산 셀로 이 파일도 같이 다시 만든다.
+const kThresholdsAsset = 'assets/models/thresholds.json';
+
 /// 같은 클래스가 이 횟수만큼 연속 윈도우에서 임계값을 넘어야 이벤트 발생 (맵에 없는 클래스의 기본값)
 const int kDefaultRequiredConsecutive = 2;
 
 /// 클래스별 연속 확인 횟수. bicycle 은 오탐이 잦아 한 번 더 확인한다
+/// (임계값만 올리면 오탐이 안 줄어든다 — ESC-50 기준 2회로 줄이면 자전거 벨 오탐이 약 2배)
 const Map<SoundClass, int> kClassRequiredConsecutive = {
   SoundClass.horn:    2,
   SoundClass.siren:   2,
@@ -70,8 +77,8 @@ class SoundDetector {
   static const int _hopSize    = _sampleRate ~/ 4;
 
   /// Android 녹음 소스 시도 순서. unprocessed(기기 내부 처리 없음)가 방향 추정에는 유리하지만
-  /// AGC가 없어 YAMNet 점수 분포가 바뀌고, 감지 임계값(0.04~0.08)과 실내/외 probe 임계값은
-  /// mic 기준으로 맞춰져 있다. 실측으로 영향을 확인하기 전까지는 mic만 쓴다.
+  /// AGC가 없어 입력 분포가 바뀌고, 분류 임계값과 실내/외 probe 임계값은 mic 기준으로 맞춰져 있다.
+  /// 실측으로 영향을 확인하기 전까지는 mic만 쓴다.
   static const _androidSources = [AndroidAudioSource.mic];
 
   /// 방향 테스트용: 마지막 감지(경적·사이렌 등)의 방향 판단 근거. 개발자 옵션에 표시된다.
@@ -91,6 +98,10 @@ class SoundDetector {
   int  _startCount  = 0; // 참조 카운트 — 여러 호출자가 동시에 필요로 할 수 있음
   Future<void>? _startingFuture; // 시작 작업 직렬화 (동시 start() 호출 시 같은 작업 공유)
   double _threshold = kBaseSensitivityThreshold;
+
+  /// 단일 라벨 헤드의 클래스별 기본 임계값 ([kThresholdsAsset] 에서 읽음)
+  Map<SoundClass, double> _singleThresholds = kClassThresholds;
+  bool _thresholdsLoaded = false;
 
   // probe 가 처음 호출될 때 로드 — 평소 감지에는 쓰지 않는다
   Interpreter? _ambientInterpreter;
@@ -119,10 +130,12 @@ class SoundDetector {
   void setThreshold(double threshold) => _threshold = threshold;
 
   /// 현재 민감도가 반영된 클래스별 실제 임계값
-  double thresholdFor(SoundClass c) =>
-      ((kClassThresholds[c] ?? kBaseSensitivityThreshold) +
-              (_threshold - kBaseSensitivityThreshold))
-          .clamp(0.0, 1.0);
+  double thresholdFor(SoundClass c) {
+    final base = _classifier.multiLabel ? kClassThresholds : _singleThresholds;
+    return ((base[c] ?? kBaseSensitivityThreshold) +
+            (_threshold - kBaseSensitivityThreshold))
+        .clamp(0.0, 1.0);
+  }
   Future<void> setMultiLabel(bool enabled) => _classifier.setMultiLabel(enabled);
 
   /// [duration] 동안 감지 추론을 건너뛰고 연속 카운트를 비운다. probe 점수 전달은 계속된다.
@@ -133,7 +146,22 @@ class SoundDetector {
     _streaks.clear();
   }
 
-  Future<void> init() => _classifier.load();
+  Future<void> init() async {
+    await _loadThresholds();
+    await _classifier.load();
+  }
+
+  Future<void> _loadThresholds() async {
+    if (_thresholdsLoaded) return;
+    _thresholdsLoaded = true;
+    try {
+      final source = await rootBundle.loadString(kThresholdsAsset);
+      _singleThresholds = parseSingleLabelThresholds(source, kClassThresholds);
+      debugPrint('✅ 임계값 로드: ${_singleThresholds.entries.map((e) => '${e.key.name}=${e.value}').join(' ')}');
+    } catch (e) {
+      debugPrint('⚠️ $kThresholdsAsset 로드 실패, 기본 임계값 사용: $e');
+    }
+  }
 
   /// 참조 카운트 기반 시작 — 여러 호출자(mic/probe)가 동시에 필요로 해도 안전.
   /// 이미 시작 작업이 진행 중이면 그 작업을 공유해서 중복 startStream() 방지.
