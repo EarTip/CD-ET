@@ -1,0 +1,117 @@
+{
+ "n_neg_clips": 1920,
+ "n_pos_clips": 80,
+ "settings": {
+  "변경 전 (0.5/0.5/0.5/0.7, 연속 2/2/2/3)": {
+   "app": {
+    "clip_fpr": 0.476,
+    "n_fp_clips": 914,
+    "by_pred": {
+     "siren": 356,
+     "brake": 462,
+     "horn": 146,
+     "bicycle": 108
+    },
+    "recall": {
+     "car_horn": 0.925,
+     "siren": 0.875
+    },
+    "by_group": {
+     "동물": 0.748,
+     "자연·물 소리": 0.365,
+     "사람(비음성)": 0.468,
+     "실내·생활음": 0.378,
+     "실외·도시 소음": 0.409
+    }
+   },
+   "crosswalk": {
+    "clip_fpr": 0.4828,
+    "n_fp_clips": 927,
+    "by_pred": {
+     "siren": 358,
+     "brake": 464,
+     "horn": 145,
+     "bicycle": 119
+    },
+    "recall": {
+     "car_horn": 0.925,
+     "siren": 0.875
+    }
+   }
+  },
+  "#37 반영 (0.51/0.43/0.49/0.84, 연속 2/2/2/3)": {
+   "app": {
+    "clip_fpr": 0.475,
+    "n_fp_clips": 912,
+    "by_pred": {
+     "siren": 359,
+     "brake": 464,
+     "horn": 145,
+     "bicycle": 102
+    },
+    "recall": {
+     "car_horn": 0.925,
+     "siren": 0.875
+    },
+    "by_group": {
+     "동물": 0.748,
+     "자연·물 소리": 0.362,
+     "사람(비음성)": 0.465,
+     "실내·생활음": 0.378,
+     "실외·도시 소음": 0.409
+    }
+   },
+   "crosswalk": {
+    "clip_fpr": 0.4792,
+    "n_fp_clips": 920,
+    "by_pred": {
+     "siren": 358,
+     "brake": 465,
+     "horn": 145,
+     "bicycle": 110
+    },
+    "recall": {
+     "car_horn": 0.925,
+     "siren": 0.875
+    }
+   }
+  },
+  "참고: #37 임계값 + bicycle 연속 2회 (채택 안 함, 연속 2/2/2/2)": {
+   "app": {
+    "clip_fpr": 0.5042,
+    "n_fp_clips": 968,
+    "by_pred": {
+     "siren": 351,
+     "brake": 456,
+     "horn": 142,
+     "bicycle": 209
+    },
+    "recall": {
+     "car_horn": 0.925,
+     "siren": 0.875
+    },
+    "by_group": {
+     "동물": 0.762,
+     "자연·물 소리": 0.39,
+     "사람(비음성)": 0.502,
+     "실내·생활음": 0.43,
+     "실외·도시 소음": 0.419
+    }
+   },
+   "crosswalk": {
+    "clip_fpr": 0.5141,
+    "n_fp_clips": 987,
+    "by_pred": {
+     "siren": 349,
+     "brake": 455,
+     "horn": 140,
+     "bicycle": 240
+    },
+    "recall": {
+     "car_horn": 0.925,
+     "siren": 0.875
+    }
+   }
+  }
+ }
+}
