@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "created": "2026-11-17T04:16:26",
+  "single": {
+    "model": "model_v4.tflite",
+    "model_md5": "61bb344a99eb755787fc4b3c57d155fb",
+    "rule": "top1 == class and prob >= threshold",
+    "thresholds": {
+      "horn": 0.51,
+      "siren": 0.43,
+      "brake": 0.49,
+      "bicycle": 0.84
+    },
+    "metrics": {
+      "horn": { "precision": 0.956, "recall": 0.812, "beta": 2.0 },
+      "siren": { "precision": 0.972, "recall": 0.863, "beta": 2.0 },
+      "brake": { "precision": 0.965, "recall": 0.688, "beta": 2.0 },
+      "bicycle": { "precision": 0.946, "recall": 0.662, "beta": 0.5 }
+    }
+  },
+  "method": "test 셋(20%, random_state=42)에서 F-beta 최대 지점, 범위 0.25~0.9",
+  "warning": "증강 후 랜덤 분할이라 수치가 낙관적일 수 있음. 실기기 로그로 재보정 권장"
+}
