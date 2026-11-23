@@ -5,7 +5,7 @@ import AVFoundation
 @main
 @objc class AppDelegate: FlutterAppDelegate {
   private let hapticChannel = HapticChannel()
-  
+  private let stereoMicChannel = StereoMicChannel()
 
   override func application(
     _ application: UIApplication,
@@ -29,6 +29,10 @@ import AVFoundation
 
     if let registrar = self.registrar(forPlugin: "HapticChannel") {
       hapticChannel.register(with: registrar.messenger())
+    }
+
+    if let registrar = self.registrar(forPlugin: "StereoMicChannel") {
+      stereoMicChannel.register(with: registrar.messenger())
     }
 
     return result
