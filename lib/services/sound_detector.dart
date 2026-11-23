@@ -185,7 +185,8 @@ class SoundDetector {
     // (_beginStream()이 참조 없음을 확인하고 _stopStream()을 기다리는 사이 들어온 start()는
     // 그 정리 작업을 공유하게 되어 스트림 없이 반환될 수 있음)
     // 그래서 완료 후 참조가 남아 있는데 실행 중이 아니면 다시 시작한다.
-    while (_startCount > 0 && !_isRunning) {
+    // 종료된 객체는 다시 시작하지 않는다 (_beginStream이 조기 반환해도 이 루프가 계속 재시도하지 않게).
+    while (_startCount > 0 && !_isRunning && !_disposed) {
       final pending = _startingFuture;
       if (pending != null) {
         await pending;
@@ -224,8 +225,11 @@ class SoundDetector {
     _pose.stop();
     if (_nativeCapture) {
       _nativeCapture = false;
-      await _nativeSub?.cancel();
+      // 취소를 기다리는 동안 새 start()가 끝나 새 구독이 _nativeSub에 들어올 수 있으므로,
+      // 먼저 현재 구독만 분리해서 참조를 비운 뒤 취소한다.
+      final sub = _nativeSub;
       _nativeSub = null;
+      await sub?.cancel();
       try {
         await _stereoMic.invokeMethod('stopCapture');
       } catch (e) {
@@ -247,6 +251,7 @@ class SoundDetector {
     TdoaAnalyzer.useDefaultProfile();
     if (Platform.isIOS) {
       await _enableIosStereo();
+      if (_disposed) return;
     }
 
     // iOS: 네이티브 캡처가 되면 그걸 쓰고, 안 되면 아래 record 경로(가짜 스테레오)로 내려간다.
@@ -257,6 +262,7 @@ class SoundDetector {
       if (_startCount == 0) await _stopStream();
       return;
     }
+    if (_disposed) return;
 
     // 스테레오를 소스 순서대로 시도하고, 전부 실패하면 모노(mic)로 연다.
     Stream<Uint8List>? stream;
@@ -293,6 +299,11 @@ class SoundDetector {
   Future<bool> _startIosNativeCapture() async {
     try {
       final info = await _stereoMic.invokeMapMethod<String, dynamic>('startCapture');
+      if (_disposed) {
+        // 시작하는 사이 dispose됐다. 엔진만 끄고 구독은 만들지 않는다.
+        await _stereoMic.invokeMethod('stopCapture');
+        return false;
+      }
       final pattern = info?['polarPattern'];
       debugPrint('🎙️ 네이티브 캡처 시작: ${info?['engineChannels']}ch · ${info?['dataSource']} · $pattern');
       if (pattern != 'Stereo') {
@@ -302,7 +313,10 @@ class SoundDetector {
       }
       _nativeSub = _stereoMicEvents.receiveBroadcastStream().listen(
         (data) => _onAudioData(data as Uint8List),
-        onError: (Object e) => debugPrint('❌ 네이티브 캡처 오류: $e'),
+        onError: (Object e) {
+          debugPrint('❌ 네이티브 캡처 오류: $e');
+          unawaited(_recoverFromNativeError());
+        },
       );
       _nativeCapture = true;
       TdoaAnalyzer.useIosStereoProfile();
@@ -311,6 +325,28 @@ class SoundDetector {
     } catch (e) {
       debugPrint('⚠️ 네이티브 캡처 실패, record로 대체: $e');
       return false;
+    }
+  }
+
+  /// 네이티브 캡처가 도중에 끊겼을 때(예: 이어폰 마이크로 입력이 1채널이 되어 엔진 재시작 실패) 복구한다.
+  /// 구독과 엔진을 정리해 실행 상태를 내리고, 아직 쓰는 쪽(참조)이 남아 있으면 다시 시작한다.
+  /// 다시 시작하면 네이티브를 먼저 시도하고, 안 되면 record 경로로 내려가며
+  /// TDOA 프로필·스테레오 여부도 그 안에서 새 입력 경로에 맞게 다시 정해진다.
+  Future<void> _recoverFromNativeError() async {
+    // 오류가 연달아 와도 처음 한 번만 처리한다 (_stopStream이 await 전에 _nativeCapture를 내린다).
+    if (!_nativeCapture || _disposed) return;
+    await _stopStream();
+    if (_startCount == 0 || _disposed || _startingFuture != null) return;
+
+    final future = _beginStream();
+    _startingFuture = future;
+    try {
+      await future;
+    } catch (e) {
+      _startCount = 0;
+      debugPrint('❌ 캡처 복구 실패: $e');
+    } finally {
+      _startingFuture = null;
     }
   }
 
@@ -575,6 +611,14 @@ class SoundDetector {
 
   Future<void> dispose() async {
     _disposed = true;
+    // 진행 중인 시작이 있으면 끝날 때까지 기다린 뒤 정리한다. 안 그러면 그 시작이 dispose 이후에
+    // 엔진·구독·자세 추적을 만들어 남긴다 (_beginStream이 각 비동기 경계 뒤에서 _disposed를 확인한다).
+    final starting = _startingFuture;
+    if (starting != null) {
+      try {
+        await starting;
+      } catch (_) {}
+    }
     // probe가 start() 참조를 쥐고 있으면 _stopStream()이 호출되지 않으므로 직접 해제한다
     _pose.stop();
     if (_nativeCapture) {
