@@ -99,9 +99,30 @@ class TdoaAnalyzer {
   // 16kHz 샘플링, 15cm 마이크 간격 기준
   // 최대 TDOA = 0.15m / 343 m/s ≈ 0.44ms ≈ 7 samples
   static const _sampleRate       = 16000.0;
-  static const _micDistanceM     = 0.15;   // 마이크 간격 (m)
+  static const _defaultMicDistanceM = 0.15; // 마이크 간격 (m)
   static const _speedOfSound     = 343.0;  // 음속 (m/s)
-  static const _maxLag           = 10;     // 탐색 최대 lag (samples, 간격 오차 여유 포함)
+  static const _defaultMaxLag    = 10;     // 탐색 최대 lag (samples, 간격 오차 여유 포함)
+
+  /// iOS 스테레오 극성 패턴 전용. 이 패턴의 L/R은 OS가 내부에서 만든 신호라 원시 마이크 간격(0.15m)
+  /// 보다 지연이 크게 나온다. 실기기(폰을 평평히, 스피커를 가장자리 2~3cm 앞)에서 축 방향 지연이
+  /// 윗변 +8.2~+9.3, 아랫변 -8.2~-8.7로 대칭이었고, 중앙값 8.5샘플 → 유효 간격 8.5·343/16000 ≈ 0.18m.
+  static const _iosMicDistanceM = 0.18;
+  static const _iosMaxLag       = 16;
+
+  static double _micDistanceM = _defaultMicDistanceM;
+  static int    _maxLag       = _defaultMaxLag;
+
+  /// Android·record 경로 등 기본 마이크 설정 (간격 0.15m, 탐색 ±10샘플)
+  static void useDefaultProfile() {
+    _micDistanceM = _defaultMicDistanceM;
+    _maxLag = _defaultMaxLag;
+  }
+
+  /// iOS 네이티브 캡처(스테레오 극성 패턴) 설정. 감지를 시작할 때마다 호출해 프로필을 고른다.
+  static void useIosStereoProfile() {
+    _micDistanceM = _iosMicDistanceM;
+    _maxLag = _iosMaxLag;
+  }
 
   static const _blockSize        = 2048;   // 블록 길이 (15600 샘플 창 → 7블록)
   static const _fftSize          = 4096;   // 순환 상관 방지용 zero-padding
@@ -137,7 +158,7 @@ class TdoaAnalyzer {
     DevicePose? pose,
   }) {
     if (pose == null || !pose.canEstimateDirection) return SoundDirection.unknown;
-    if (_isDuplicateChannel(ch1, ch2)) return SoundDirection.unknown;
+    if (isDuplicateChannel(ch1, ch2)) return SoundDirection.unknown;
 
     final blocks = selectBlocks(estimateBlocks(ch1, ch2));
     if (blocks.length < _minBlocks) return SoundDirection.unknown;
@@ -288,7 +309,7 @@ class TdoaAnalyzer {
   }
 
   /// 모노 녹음을 두 채널에 복사한 경우 (모노 fallback·가짜 스테레오)
-  static bool _isDuplicateChannel(List<double> ch1, List<double> ch2) {
+  static bool isDuplicateChannel(List<double> ch1, List<double> ch2) {
     final n = min(ch1.length, ch2.length);
     for (int i = 0; i < n; i++) {
       if (ch1[i] != ch2[i]) return false;

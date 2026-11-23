@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -83,6 +84,18 @@ class SoundDetector {
 
   /// 방향 테스트용: 마지막 감지(경적·사이렌 등)의 방향 판단 근거. 개발자 옵션에 표시된다.
   static final lastDirectionDebug = ValueNotifier<String?>(null);
+
+  /// iOS 내장 마이크는 기본이 모노라 2채널로 열어도 같은 신호가 복제된다. 녹음 전에 스테레오로 맞춘다.
+  static const _stereoMic = MethodChannel('stereo_mic_channel');
+
+  /// iOS 네이티브 캡처(16kHz 스테레오 PCM16 인터리브)가 흘러오는 채널. record 플러그인은 iOS에서
+  /// L/R을 같은 신호로 뭉개기 때문에, iOS는 AVAudioEngine으로 직접 녹음해서 받는다.
+  static const _stereoMicEvents = EventChannel('stereo_mic_events');
+  StreamSubscription<dynamic>? _nativeSub;
+  bool _nativeCapture = false;
+
+  /// iOS 스테레오 설정 결과 (디버그 표시용). Android나 설정 전에는 null.
+  static String? _iosStereoInfo;
 
   final PoseTracker _pose = PoseTracker();
 
@@ -209,7 +222,18 @@ class SoundDetector {
   Future<void> _stopStream() async {
     _isRunning = false;
     _pose.stop();
-    await _recorder.stop();
+    if (_nativeCapture) {
+      _nativeCapture = false;
+      await _nativeSub?.cancel();
+      _nativeSub = null;
+      try {
+        await _stereoMic.invokeMethod('stopCapture');
+      } catch (e) {
+        debugPrint('⚠️ 네이티브 캡처 정지 실패: $e');
+      }
+    } else {
+      await _recorder.stop();
+    }
     _streaks.clear();
     _bufL.clear();
     _bufR.clear();
@@ -218,6 +242,21 @@ class SoundDetector {
 
   Future<void> _beginStream() async {
     if (!_classifier.isLoaded) await init();
+
+    // 프로필은 시작할 때마다 고른다. iOS 네이티브 캡처가 성공하면 아래에서 iOS용으로 바꾼다.
+    TdoaAnalyzer.useDefaultProfile();
+    if (Platform.isIOS) {
+      await _enableIosStereo();
+    }
+
+    // iOS: 네이티브 캡처가 되면 그걸 쓰고, 안 되면 아래 record 경로(가짜 스테레오)로 내려간다.
+    if (Platform.isIOS && await _startIosNativeCapture()) {
+      _isStereo = true;
+      _isRunning = true;
+      _pose.start();
+      if (_startCount == 0) await _stopStream();
+      return;
+    }
 
     // 스테레오를 소스 순서대로 시도하고, 전부 실패하면 모노(mic)로 연다.
     Stream<Uint8List>? stream;
@@ -240,11 +279,62 @@ class SoundDetector {
     debugPrint('✅ 마이크 스트림 시작 (stereo=$_isStereo, source=${source.name})');
     stream.listen(_onAudioData);
     _isRunning = true;
+    if (Platform.isIOS) unawaited(_logIosStereoStatus());
     if (_isStereo) _pose.start();
 
     // 시작 작업 도중 참조가 전부 사라졌다면(대기 중 stop() 호출) 바로 정리
     if (_startCount == 0) {
       await _stopStream();
+    }
+  }
+
+  /// record 대신 AVAudioEngine으로 직접 녹음한다. 성공하면 true.
+  /// 극성 패턴이 Stereo로 안 잡혔으면 두 채널이 복제본일 수 있어 false로 돌려 record 경로로 내려보낸다.
+  Future<bool> _startIosNativeCapture() async {
+    try {
+      final info = await _stereoMic.invokeMapMethod<String, dynamic>('startCapture');
+      final pattern = info?['polarPattern'];
+      debugPrint('🎙️ 네이티브 캡처 시작: ${info?['engineChannels']}ch · ${info?['dataSource']} · $pattern');
+      if (pattern != 'Stereo') {
+        debugPrint('⚠️ 스테레오 극성 패턴이 아니라서 네이티브 캡처를 쓰지 않음');
+        await _stereoMic.invokeMethod('stopCapture');
+        return false;
+      }
+      _nativeSub = _stereoMicEvents.receiveBroadcastStream().listen(
+        (data) => _onAudioData(data as Uint8List),
+        onError: (Object e) => debugPrint('❌ 네이티브 캡처 오류: $e'),
+      );
+      _nativeCapture = true;
+      TdoaAnalyzer.useIosStereoProfile();
+      debugPrint('✅ 마이크 스트림 시작 (stereo=true, native AVAudioEngine)');
+      return true;
+    } catch (e) {
+      debugPrint('⚠️ 네이티브 캡처 실패, record로 대체: $e');
+      return false;
+    }
+  }
+
+  Future<void> _enableIosStereo() async {
+    try {
+      final info = await _stereoMic.invokeMapMethod<String, dynamic>('enable');
+      if (info == null) return;
+      _iosStereoInfo = info['stereo'] == true
+          ? 'iOS 스테레오 ${info['channels']}ch · ${info['dataSource']} · ${info['polarPattern']} · ${info['orientation']}'
+          : 'iOS 스테레오 실패: ${info['reason'] ?? '입력 ${info['channels']}ch'}';
+      debugPrint('🎙️ $_iosStereoInfo');
+    } catch (e) {
+      _iosStereoInfo = 'iOS 스테레오 설정 오류: $e';
+      debugPrint('⚠️ $_iosStereoInfo');
+    }
+  }
+
+  /// record 플러그인이 세션을 다시 설정한 뒤에도 스테레오 극성 패턴이 유지되는지 확인한다.
+  Future<void> _logIosStereoStatus() async {
+    try {
+      final info = await _stereoMic.invokeMapMethod<String, dynamic>('status');
+      debugPrint('🎙️ 녹음 시작 후 입력: ${info?['channels']}ch · ${info?['dataSource']} · ${info?['polarPattern']}');
+    } catch (e) {
+      debugPrint('⚠️ iOS 입력 상태 조회 실패: $e');
     }
   }
 
@@ -322,8 +412,10 @@ class SoundDetector {
     // dispatch 시점의 probe 콜백 — 이후에 시작된 probe로 이전 구간의 결과가 새지 않게 한다.
     final onScores = _onScores;
     try {
+      // record 경로의 iOS는 R이 L의 위상이 틀어진 복제본이라 평균을 내면 서로 상쇄되어 입력이 크게
+      // 줄고 감지 점수가 떨어진다. 그 경우만 L을 쓰고, 네이티브 캡처(진짜 스테레오)는 평균을 쓴다.
       final mono = Float32List.fromList(
-        List.generate(_windowSize, (i) => (winL[i] + winR[i]) * 0.5),
+        List.generate(_windowSize, (i) => Platform.isIOS && !_nativeCapture ? winL[i] : (winL[i] + winR[i]) * 0.5),
       );
 
       // probe 중일 때만 521개 점수 YAMNet 을 돌린다 (무음 스킵보다 먼저 — 배경음 판단용)
@@ -420,6 +512,9 @@ class SoundDetector {
     final String detail;
     if (!_isStereo) {
       detail = '모노 녹음 — 이 기기는 방향 추정 불가';
+    } else if (TdoaAnalyzer.isDuplicateChannel(winL, winR)) {
+      detail = '두 채널이 동일 (가짜 스테레오) — 방향 추정 불가'
+          '${_iosStereoInfo == null ? '' : '\n$_iosStereoInfo'}';
     } else {
       final blocks = TdoaAnalyzer.selectBlocks(TdoaAnalyzer.estimateBlocks(winL, winR));
       final lag = TdoaAnalyzer.medianLag(blocks);
@@ -428,7 +523,12 @@ class SoundDetector {
           ? '자세 정보 없음'
           : '앙각 ${pose.axisElevationDeg.toStringAsFixed(0)}° · 화면 ${pose.screenUp ? '위' : '아래'}'
               '${pose.canEstimateDirection ? '' : ' (방향 낼 수 없는 자세)'}';
-      detail = 'lag $lagText · 유효 블록 ${blocks.length}개 · $poseText';
+      final lags = blocks.map((b) => b.lag).toList()..sort();
+      final range = lags.isEmpty
+          ? ''
+          : ' (블록 ${lags.first.toStringAsFixed(1)}~${lags.last.toStringAsFixed(1)})';
+      detail = 'lag $lagText$range · 유효 블록 ${blocks.length}개 · $poseText'
+          '${_iosStereoInfo == null ? '' : '\n$_iosStereoInfo'}';
     }
     lastDirectionDebug.value = '${sound.name} → ${direction.label}\n$detail';
     debugPrint('🧭 ${sound.name} → ${direction.name} | $detail');
@@ -477,6 +577,14 @@ class SoundDetector {
     _disposed = true;
     // probe가 start() 참조를 쥐고 있으면 _stopStream()이 호출되지 않으므로 직접 해제한다
     _pose.stop();
+    if (_nativeCapture) {
+      _nativeCapture = false;
+      await _nativeSub?.cancel();
+      _nativeSub = null;
+      try {
+        await _stereoMic.invokeMethod('stopCapture');
+      } catch (_) {}
+    }
     await _recorder.dispose();
     // isolate가 참조하는 네이티브 인터프리터를 닫기 전에 진행 중인 추론을 기다린다.
     try {
